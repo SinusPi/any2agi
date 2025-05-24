@@ -58,6 +58,11 @@
 #
 # Thanks for using IT2AGI!
 #
+# Sinus takes over:
+#
+# 0.2.1: Added recognizing MOD, S3M and XM modules, and MIDI
+#        files. They're not (yet?) supported, but recognized.
+# 
 ###############################################################
 #    Notes on making IT2AGI-compliant Impulse Tracker files   #
 ###############################################################
@@ -90,7 +95,7 @@
 
 $NUMCH=4;
 
-print "IT2AGI version 0.2\n";
+print "IT2AGI version 0.2.1\n";
 print "(c) 1999-2000 Nat Budin - portions by Lance Ewing\n";
 print "Fixes 2025 by Adam 'Sinus' Skawinski\n";
 print "\n";
@@ -110,122 +115,193 @@ if (!$outfile) { $outfile=$infile; $outfile =~ s/\..+$/.AGS/; }
 
 # READING
 
-read(INFILE,$buf,4);
-if ($buf ne "IMPM") {
-  die("Invalid IT header in file!  Stopped");
+if (its_SND()) {
+  die("$infile : The input file seems to be in AGI SOUND format already.\n");
+} elsif (its_IT()) {
+  read_IT();
+} elsif (its_MOD()) {
+  read_MOD();
+} elsif (its_S3M()) {
+  read_S3M();
+} elsif (its_XM()) {
+  read_XM();
+} elsif (its_MID()) {
+  read_MID();
+} else {
+  die("$infile : Unrecognized input file format.\n");
 }
 
-read(INFILE,$songname,26);
-print "Reading module '$songname' from $infile\n";
+sub its_SND() {
+  seek(INFILE,0,0);
+  read(INFILE,$_,2);
+  my ($of1,$of2) = unpack("C2");
+  return ($of1==8 && $of2==0);
+}
 
-read(INFILE,$buf,2);
-read(INFILE,$buf,15);
-($ordnum, $insnum, $smpnum, $patnum,
- $cwtv,   $cmwt,   $flags) = unpack("S6b8",$buf);
-read(INFILE,$buf,1);
-$special=unpack("b8",$buf);
+sub its_IT() {
+  seek(INFILE,0,0);
+  read(INFILE,my $buf,4);
+  return ($buf eq "IMPM");
+}
+sub read_IT() {
+  seek(INFILE,4,0);
+  read(INFILE,$songname,26);
+  print "Reading module '$songname' from $infile\n";
 
-($stereo, $mixopt, $useins, $linear, $oldfx,  $linkfx, $usemid, $reqmid)
-      = split("",$flags);
-($incmsg, $dum1,   $dum2,   $midcfg, $dum3,   $dum4,   $dum5,   $dum6)
-      = split("",$special);
-
-read(INFILE,$buf,16);
-($gv, $mv, $is, $it, $sep, $pwd, $msglgth, $msgoffset, $dum1)
-      = unpack("C6SI2",$buf);
-
-read(INFILE,$buf,64);
-@chnlpan=unpack("C64",$buf);
-
-read(INFILE,$buf,64);
-@chnlvol=unpack("C64",$buf);
-
-read(INFILE,$buf,$ordnum);
-@orders=unpack("C$ordnum",$buf);
-
-read(INFILE,$buf,$insnum*4+$smpnum*4);
-read(INFILE,$buf,$patnum*4);
-@patoff=unpack("I$patnum",$buf);
-
-print "Pass 1: Reading IT Data\n";
-
-$arow=0;
-$arows=0;
-
-for ($order=0; $order<($ordnum-1); $order++) {
-  seek(INFILE,$patoff[$orders[$order]],0);
-  read(INFILE,$buf,8);
-  ($patlen, $rows, $dum1) = unpack("S2I",$buf);
-  $arows+=$rows;
-
-  $row=0;
-
-READER: while ($row<$rows) {
-  $pmvar=$mvar;
+  read(INFILE,$buf,2);
+  read(INFILE,$buf,15);
+  ($ordnum, $insnum, $smpnum, $patnum,
+  $cwtv,   $cmwt,   $flags) = unpack("S6b8",$buf);
   read(INFILE,$buf,1);
-  $cvar = unpack("C",$buf);
-  if ($cvar==0) {       # end of row
-    $row++;
-    $arow++;
-    if ($DEBUG_IT) { print(sprintf("0x%X", tell(INFILE)-1)." = next row: $row\n"); }
-    next READER;
-  }
-  $channel = ($cvar - 1) & 63;
-    if ($DEBUG_IT) { print("chan $channel\n"); }
-  $pmvar = $chanmask[$channel];
-  if ($cvar & 128) {
-    read(INFILE,$buf,1);
-    $mvar = unpack("C",$buf);
-    if ($DEBUG_IT) { print(sprintf("0x%X", tell(INFILE)-1)." = mvar $mvar\n"); }
-  }
-  else {
-    $mvar = $pmvar;
-    if ($DEBUG_IT) { print("pmvar $mvar\n"); }
-  }
-  $chanmask[$channel]=$mvar;
+  $special=unpack("b8",$buf);
 
-  if ($mvar & 16) {
-    $pattern[$arow][$channel]{note} = $lastval[$channel]{note};
-    if ($DEBUG_IT) { print($arow.": WTF? ch".$channel." n prev\n"); }
-  }
-  if ($mvar & 32) {
-    $pattern[$arow][$channel]{instrument} = $lastval[$channel]{instrument};
-  }
-  if ($mvar & 64) {
-    $pattern[$arow][$channel]{volpan} = $lastval[$channel]{volpan};
-    if ($DEBUG_IT) { print(sprintf("0x%X", tell(INFILE)-1)." = ".$arow.": ch".$channel." REv ".$lastval[$channel]{volpan}."\n"); }
-  }
-  if ($mvar & 128) {
-    $pattern[$arow][$channel]{command} = $lastval[$channel]{command};
-    $pattern[$arow][$channel]{param} = $lastval[$channel]{param};
-  }
+  ($stereo, $mixopt, $useins, $linear, $oldfx,  $linkfx, $usemid, $reqmid)
+        = split("",$flags);
+  ($incmsg, $dum1,   $dum2,   $midcfg, $dum3,   $dum4,   $dum5,   $dum6)
+        = split("",$special);
 
-  if ($mvar & 1) {
-    read(INFILE,$buf,1);
-    $lastval[$channel]{note} = $pattern[$arow][$channel]{note} = unpack("C",$buf);
-    if ($DEBUG_IT) { print(sprintf("0x%X", tell(INFILE)-1)." = ".$arow.": ch".$channel." n ".unpack("C",$buf)."\n"); }
+  read(INFILE,$buf,16);
+  ($gv, $mv, $is, $it, $sep, $pwd, $msglgth, $msgoffset, $dum1)
+        = unpack("C6SI2",$buf);
+
+  read(INFILE,$buf,64);
+  @chnlpan=unpack("C64",$buf);
+
+  read(INFILE,$buf,64);
+  @chnlvol=unpack("C64",$buf);
+
+  read(INFILE,$buf,$ordnum);
+  @orders=unpack("C$ordnum",$buf);
+
+  read(INFILE,$buf,$insnum*4+$smpnum*4);
+  read(INFILE,$buf,$patnum*4);
+  @patoff=unpack("I$patnum",$buf);
+
+  print "Pass 1: Reading IT Data\n";
+
+  $arow=0;
+  $arows=0;
+
+  for ($order=0; $order<($ordnum-1); $order++) {
+    seek(INFILE,$patoff[$orders[$order]],0);
+    read(INFILE,$buf,8);
+    ($patlen, $rows, $dum1) = unpack("S2I",$buf);
+    $arows+=$rows;
+
+    $row=0;
+
+    READER: while ($row<$rows) {
+      $pmvar=$mvar;
+      read(INFILE,$buf,1);
+      $cvar = unpack("C",$buf);
+      if ($cvar==0) {       # end of row
+        $row++;
+        $arow++;
+        if ($DEBUG_IT) { print(sprintf("0x%X", tell(INFILE)-1)." = next row: $row\n"); }
+        next READER;
+      }
+      $channel = ($cvar - 1) & 63;
+        if ($DEBUG_IT) { print("chan $channel\n"); }
+      $pmvar = $chanmask[$channel];
+      if ($cvar & 128) {
+        read(INFILE,$buf,1);
+        $mvar = unpack("C",$buf);
+        if ($DEBUG_IT) { print(sprintf("0x%X", tell(INFILE)-1)." = mvar $mvar\n"); }
+      }
+      else {
+        $mvar = $pmvar;
+        if ($DEBUG_IT) { print("pmvar $mvar\n"); }
+      }
+      $chanmask[$channel]=$mvar;
+
+      if ($mvar & 16) {
+        $pattern[$arow][$channel]{note} = $lastval[$channel]{note};
+        if ($DEBUG_IT) { print($arow.": WTF? ch".$channel." n prev\n"); }
+      }
+      if ($mvar & 32) {
+        $pattern[$arow][$channel]{instrument} = $lastval[$channel]{instrument};
+      }
+      if ($mvar & 64) {
+        $pattern[$arow][$channel]{volpan} = $lastval[$channel]{volpan};
+        if ($DEBUG_IT) { print(sprintf("0x%X", tell(INFILE)-1)." = ".$arow.": ch".$channel." REv ".$lastval[$channel]{volpan}."\n"); }
+      }
+      if ($mvar & 128) {
+        $pattern[$arow][$channel]{command} = $lastval[$channel]{command};
+        $pattern[$arow][$channel]{param} = $lastval[$channel]{param};
+      }
+
+      if ($mvar & 1) {
+        read(INFILE,$buf,1);
+        $lastval[$channel]{note} = $pattern[$arow][$channel]{note} = unpack("C",$buf);
+        if ($DEBUG_IT) { print(sprintf("0x%X", tell(INFILE)-1)." = ".$arow.": ch".$channel." n ".unpack("C",$buf)."\n"); }
+      }
+      if ($mvar & 2) {
+        read(INFILE,$buf,1);
+        $lastval[$channel]{instrument} = $pattern[$arow][$channel]{instrument} = unpack("C",$buf);
+        if ($DEBUG_IT) { print(sprintf("0x%X", tell(INFILE)-1)." = ".$arow.": ch".$channel." i ".unpack("C",$buf)."\n"); }
+      }
+      if ($mvar & 4) {
+        read(INFILE,$buf,1);
+        $lastval[$channel]{volpan} = $pattern[$arow][$channel]{volpan} = unpack("C",$buf);
+        if ($DEBUG_IT) { print(sprintf("0x%X", tell(INFILE)-1)." = ".$arow.": ch".$channel." v ".unpack("C",$buf)."\n"); }
+      }
+      if ($mvar & 8) {
+        read(INFILE,$buf,2);
+        ($pattern[$arow][$channel]{command},
+        $pattern[$arow][$channel]{param}) = unpack("CC",$buf);
+        $lastval[$channel]{command}=$pattern[$arow][$channel]{command};
+        $lastval[$channel]{param}=$pattern[$arow][$channel]{param};
+        if ($DEBUG_IT) { print(sprintf("0x%X", tell(INFILE)-1)." = ".$arow.": ch".$channel." cp ".unpack("CC",$buf)."\n"); }
+      }
+    }
   }
-  if ($mvar & 2) {
-    read(INFILE,$buf,1);
-    $lastval[$channel]{instrument} = $pattern[$arow][$channel]{instrument} = unpack("C",$buf);
-    if ($DEBUG_IT) { print(sprintf("0x%X", tell(INFILE)-1)." = ".$arow.": ch".$channel." i ".unpack("C",$buf)."\n"); }
-  }
-  if ($mvar & 4) {
-    read(INFILE,$buf,1);
-    $lastval[$channel]{volpan} = $pattern[$arow][$channel]{volpan} = unpack("C",$buf);
-    if ($DEBUG_IT) { print(sprintf("0x%X", tell(INFILE)-1)." = ".$arow.": ch".$channel." v ".unpack("C",$buf)."\n"); }
-  }
-  if ($mvar & 8) {
-    read(INFILE,$buf,2);
-    ($pattern[$arow][$channel]{command},
-     $pattern[$arow][$channel]{param}) = unpack("CC",$buf);
-    $lastval[$channel]{command}=$pattern[$arow][$channel]{command};
-    $lastval[$channel]{param}=$pattern[$arow][$channel]{param};
-    if ($DEBUG_IT) { print(sprintf("0x%X", tell(INFILE)-1)." = ".$arow.": ch".$channel." cp ".unpack("CC",$buf)."\n"); }
-  }
+  close(INFILE);
 }
+
+sub its_MOD() {
+  seek(INFILE,0x438,0);
+  read(INFILE,my $buf,4);
+  return ($buf eq "M.K.");
 }
-close(INFILE);
+sub read_MOD() {
+  seek(INFILE,0,0);
+  read(INFILE,my $title,0x14);
+  print("Reading Protracker module '$title'...\n");
+  die("$infile : Sorry, MODs are not yet supported.\n");
+}
+
+sub its_S3M() {
+  seek(INFILE,0x2C,0);
+  read(INFILE,my $buf,4);
+  return ($buf eq "SCRM");
+}
+sub read_S3M() {
+  seek(INFILE,0,0);
+  read(INFILE,my $title,0x14);
+  print("Reading ScreamTracker3 module '$title'...\n");
+  die("$infile : Sorry, S3Ms are not yet supported.\n");
+}
+
+sub its_XM() {
+  seek(INFILE,0x26,0);
+  read(INFILE,my $buf,11);
+  return ($buf eq "FastTracker");
+}
+sub read_XM() {
+  seek(INFILE,0x11,0);
+  read(INFILE,my $title,0x14);
+  print("Reading FastTracker module '$title'...\n");
+  die("$infile : Sorry, XMs are not yet supported.\n");
+}
+
+sub its_MID() {
+  seek(INFILE,0,0);
+  read(INFILE,my $buf,4);
+  return ($buf eq "MThd");
+}
+sub read_MID() {
+  die("$infile : Sorry, MIDs are not yet supported.\n");
+}
 
 $rows=$arows;
 
