@@ -93,7 +93,7 @@
 #
 # Oh, and one more: have fun.
 
-$NUMCH=4;
+@CHANNELS=(1,2,3,4);
 
 print "IT2AGI version 0.2.1\n";
 print "(c) 1999-2000 Nat Budin - portions by Lance Ewing\n";
@@ -106,6 +106,10 @@ $v = shift @ARGV;
 if ($v eq "--debug-it") { $DEBUG_IT=1; $v = shift @ARGV; }
 if ($v eq "--debug-agi") { $DEBUG_AGI=1; $v = shift @ARGV; }
 if ($v eq "--debug-out") { $DEBUG_OUT=1; $v = shift @ARGV; }
+if ($v eq "--channels") { @CHANNELS = split(",",shift @ARGV); $v = shift @ARGV; }
+
+$NUMCH=$#CHANNELS+1;
+
 $infile = $v;
 open(INFILE, "<".$infile);
 binmode(INFILE);
@@ -183,7 +187,10 @@ sub read_IT() {
   $arows=0;
 
   for ($order=0; $order<($ordnum-1); $order++) {
-    seek(INFILE,$patoff[$orders[$order]],0);
+    my $offset = $patoff[$orders[$order]];
+    next if (!$offset);
+    print("Reading pattern $order / $ordnum offset $offset\n");
+    seek(INFILE,$offset,0);
     read(INFILE,$buf,8);
     ($patlen, $rows, $dum1) = unpack("S2I",$buf);
     $arows+=$rows;
@@ -305,8 +312,11 @@ sub read_MID() {
 
 $rows=$arows;
 
+print "Using channels ".join(",",@CHANNELS)."\n";
+
 print "Pass 2: Finding Note Lengths\n";
-for ($channel=0; $channel<$NUMCH; $channel++) {
+for (my $outchan=0; $outchan<$NUMCH; $outchan++) {
+  $channel = $CHANNELS[$outchan]-1;
   $nn=0;
   for ($row=0; $row<$rows; $row++) {
     $note=$pattern[$row][$channel]{note};
@@ -327,13 +337,13 @@ for ($channel=0; $channel<$NUMCH; $channel++) {
         }
         $volpan=$pattern[$row][$channel]{volpan};
 
-        $tunedata[$channel][$nn]{row} = $row;
-        $tunedata[$channel][$nn]{note} = $note;
-        $tunedata[$channel][$nn]{length} = $notelen;
-        $tunedata[$channel][$nn]{volpan} = $volpan;
+        $tunedata[$outchan][$nn]{row} = $row;
+        $tunedata[$outchan][$nn]{note} = $note;
+        $tunedata[$outchan][$nn]{length} = $notelen;
+        $tunedata[$outchan][$nn]{volpan} = $volpan;
         $nn++;
     }
-    $tunelen[$channel] = $nn;
+    $tunelen[$outchan] = $nn;
   }
 }
 
@@ -450,16 +460,13 @@ open(FILE,">".$outfile);
 binmode(FILE);
 
 print FILE "\x08\x00";
-
 $fpos=8;
 
-for ($ch=0;$ch<$NUMCH-1;$ch++) {
+for ($ch=0;$ch<3;$ch++) {
   $fpos+=length($snddata[$ch])+2;
-  $fbyte=chr($fpos%256);
-  $sbyte=chr(int($fpos>>8));
-  print FILE $fbyte.$sbyte;
+  print FILE pack("S",$fpos);
 }
-for ($ch=0;$ch<$NUMCH;$ch++) {
+for ($ch=0;$ch<4;$ch++) {
   print FILE $snddata[$ch];
   print FILE "\xFF\xFF";
 }
