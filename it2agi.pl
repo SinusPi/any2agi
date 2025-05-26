@@ -402,13 +402,11 @@ if ($#pattern) {
 
   print "Pass 2: Finding Note Lengths\n";
 
-  if ($it && $is) {
-    $tempo=$it;
-    $speed=$is;
-    $durmul=9*($speed/8)*(140/$tempo);
-    if (int($durmul)!=$durmul) {
-      if ($durmul<int($durmul)+0.5) {$durmul=int($durmul)} else {$durmul=int($durmul)+1}
-    }
+  $tempo=$it;
+  $speed=$is;
+  $durmul=9*($speed/8)*(140/$tempo);
+  if (int($durmul)!=$durmul) {
+    if ($durmul<int($durmul)+0.5) {$durmul=int($durmul)} else {$durmul=int($durmul)+1}
   }
 
   for (my $outchan=0; $outchan<$NUMCH; $outchan++) {
