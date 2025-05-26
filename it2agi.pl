@@ -394,8 +394,6 @@ sub read_vlq {
 # NOT NEEDED when working with a MIDI file.
 
 if ($#pattern) {
-  $rows=$arows;
-
   $tunedata=[];
 
   print "Using channels ".join(",",@CHANNELS)."\n";
@@ -404,21 +402,19 @@ if ($#pattern) {
 
   $tempo=$it;
   $speed=$is;
-  $durmul=9*($speed/8)*(140/$tempo);
-  if (int($durmul)!=$durmul) {
-    if ($durmul<int($durmul)+0.5) {$durmul=int($durmul)} else {$durmul=int($durmul)+1}
-  }
-
+  $durmul = 9*($speed/8)*(140/$tempo);
+  $durmul = int($durmul+0.5);
+  
   for (my $outchan=0; $outchan<$NUMCH; $outchan++) {
     $tunedata[$outchan] = [];
     $channel = $CHANNELS[$outchan]-1;
-    for ($row=0; $row<$rows; $row++) {
+    for ($row=0; $row<$arows; $row++) {
       $note=$pattern[$row][$channel]{note};
       if($note>0 && $note<120) { #exclude cuts and offs
         if ($DEBUG_NOTES) { print($row.",".$pattern[$row][$channel]{note}.",".$pattern[$row][$channel]{rows}.",".$pattern[$row][$channel]{volpan}."\n"); }
-        $notelen=-1; 
+        $notelen=$arows-$row; # assume no end
         $srchrow=$row+1;
-        NOTESEARCH: while ($srchrow<$rows) {
+        NOTESEARCH: while ($srchrow<$arows) {
           if($pattern[$srchrow][$channel]{note}) {
             #if ($channel==1) { print("$row note $note, found end at $srchrow: ".$pattern[$srchrow][$channel]{note}."\n"); }
             $notelen=$srchrow-$row;
@@ -426,12 +422,9 @@ if ($#pattern) {
           }
           $srchrow++;
         }
-        if ($notelen==-1) {
-          $notelen=$rows-$row;
-        }
         $vol=$pattern[$row][$channel]{volpan};
 
-        push @{$tunedata[$outchan]}, { row => $row, note => $note, rows => $notelen, vol => $vol,   start => $row*$durmul, length => $notelen*$durmul };
+        push @{$tunedata[$outchan]}, { note => $note, vol => $vol,   row => $row, rows => $notelen,    start => $row*$durmul, length => $notelen*$durmul };
       }
     }
   }
