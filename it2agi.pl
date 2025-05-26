@@ -501,9 +501,14 @@ for ($voice=0; $voice<$NUMCH; $voice++) {
 
     $out_dur = $durmul ? $length*$durmul : $time;
 
-    $freq=(440.0 * exp(($note-69)*log(2.0)/12.0));  #thanks to Lance Ewing!
-    if (int($freq)!=$freq) {
-      if ($freq<int($freq)+0.5) {} else {$freq=int($freq)+1}
+    if ($voice<=2) {
+      $freq=(440.0 * exp(($note-69)*log(2.0)/12.0));  #thanks to Lance Ewing!
+      if (int($freq)!=$freq) {
+        if ($freq<int($freq)+0.5) {} else {$freq=int($freq)+1}
+      }
+    } else {
+      $out_noisetype = int($note/12)%2;
+      $out_noisefreq = $note%4;
     }
     if ($note==-1) { $freq=0; }
     
@@ -513,15 +518,6 @@ for ($voice=0; $voice<$NUMCH; $voice++) {
     if ($DEBUG_AGI) { print("v: ".$volbase."  "); }
     $out_atten = 15-$volbase;
 
-    $bytes={" "," "," "," "," "};
-    
-    $d=int($out_dur >> 8);
-    $d2=$out_dur % 256;
-    if ($DEBUG_AGI) { print("d".$d." "); }
-    if ($DEBUG_AGI) { print("D".$d2." "); }
-    $bytes[0]=chr($d2); # buf
-    $bytes[1]=chr($d);  # buf
-    
     $vreg=$voice<<1;
     if ($voice<=2) {
       $out_freqdiv = $freq ? int(111860/$freq) : 0;
@@ -529,23 +525,18 @@ for ($voice=0; $voice<$NUMCH; $voice++) {
       $v = 128+($vreg<<4)+($out_freqdiv%16);
     } else { # noise
       $f = 0;
-      $v = 128 + 96 + 4*(int($note/12)%2) + ($note%4);  # even octave: periodic, odd octave: noise. Notes = 4 noise types.
+      $v = 128 + 96 + ($out_noisetype<<2) + ($out_noisefreq);  # even octave: periodic, odd octave: noise. Notes = 4 noise types.
     }
-    die "overflow f $f" if ($f<0 || $f>255);
-    die "overflow v $v" if ($v<0 || $v>255);
-    if ($DEBUG_AGI) { print("f".$f." "); }
-    if ($DEBUG_AGI) { print("v".$v." "); }
-    $bytes[2]=chr($f); # buf
-    $bytes[3]=chr($v); # buf
+    die "overflow f $f" if ($f<0 || $f>255);  die "overflow v $v" if ($v<0 || $v>255);
+    if ($DEBUG_AGI) { print("f$f v$v "); }
 
     $areg=$vreg+1;
     $a=128+($areg<<4)+$out_atten;
     die "overflow a $a areg $areg ".($areg<<4)." atten $out_atten" if ($a<0 || $a>255);
     if ($DEBUG_AGI) { print("a".$a." "); }
-    $bytes[4]=chr($a); # buf
 
-    $an=$bytes[0].$bytes[1].$bytes[2].$bytes[3].$bytes[4];
-    $snddata[$voice] = $snddata[$voice].$an;
+    $packet = pack("SCCC",$out_dur,$f,$v,$a);
+    $snddata[$voice] = $snddata[$voice].$packet;
     
     if ($DEBUG_AGI) { print("\n"); }
   }
