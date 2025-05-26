@@ -401,6 +401,16 @@ if ($#pattern) {
   print "Using channels ".join(",",@CHANNELS)."\n";
 
   print "Pass 2: Finding Note Lengths\n";
+
+  if ($it && $is) {
+    $tempo=$it;
+    $speed=$is;
+    $durmul=9*($speed/8)*(140/$tempo);
+    if (int($durmul)!=$durmul) {
+      if ($durmul<int($durmul)+0.5) {$durmul=int($durmul)} else {$durmul=int($durmul)+1}
+    }
+  }
+
   for (my $outchan=0; $outchan<$NUMCH; $outchan++) {
     $tunedata[$outchan] = [];
     $channel = $CHANNELS[$outchan]-1;
@@ -423,7 +433,7 @@ if ($#pattern) {
         }
         $vol=$pattern[$row][$channel]{volpan};
 
-        push @{$tunedata[$outchan]}, { row => $row, note => $note, rows => $notelen, vol => $vol };
+        push @{$tunedata[$outchan]}, { row => $row, note => $note, rows => $notelen, vol => $vol,   start => $row*$durmul, length => $notelen*$durmul };
       }
     }
   }
@@ -439,22 +449,22 @@ for ($channel=0; $channel<$NUMCH; $channel++) {
   for ($nn=0; $nn<scalar(@{$tunedata[$channel]}); $nn++) {
     if ($nn==0) {
       my $first_note = $tunedata[$channel][0];
-      if ($first_note->{row} == 0) {
+      if ($first_note->{start} == 0) {
         push @{$notedata[$channel]}, $first_note;
       }
       else {
-        push @{$notedata[$channel]}, { note => -1, rows => $first_note->{row} };
+        push @{$notedata[$channel]}, { note => -1, length => $first_note->{start} };
         push @{$notedata[$channel]}, $first_note;
       }
     }
     else {
       my $current_note = $tunedata[$channel][$nn];
       my $previous_note = $tunedata[$channel][$nn-1];
-      if ($current_note->{row} - ($previous_note->{row} + $previous_note->{rows}) == 0) {
+      if ($current_note->{start} - ($previous_note->{start} + $previous_note->{length}) == 0) {
         push @{$notedata[$channel]}, $current_note;
       }
       else {
-        push @{$notedata[$channel]}, { note => -1, rows => $current_note->{row} - ($previous_note->{row} + $previous_note->{rows}) };
+        push @{$notedata[$channel]}, { note => -1, length => $current_note->{start} - ($previous_note->{start} + $previous_note->{length}) };
         push @{$notedata[$channel]}, $current_note;
       }
     }
@@ -463,21 +473,6 @@ for ($channel=0; $channel<$NUMCH; $channel++) {
 
 ###################################################################
 # Notes and rests are ready in $notedata
-
-if ($it && $is) {
-  $tempo=$it;
-  $speed=$is;
-  $durmul=9*($speed/8)*(140/$tempo);
-  if (int($durmul)!=$durmul) {
-    if ($durmul<int($durmul)+0.5) {$durmul=int($durmul)} else {$durmul=int($durmul)+1}
-  }
-
-  for ($voice=0; $voice<$NUMCH; $voice++) {
-    for ($in=0; $in<scalar(@{$notedata[$voice]}); $in++) {
-      $notedata[$voice][$in]{length} = $notedata[$voice][$in]{rows} * $durmul;
-    }
-  }
-}
 
 print "Pass 4: Converting to AGI data\n";
 
