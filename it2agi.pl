@@ -62,6 +62,7 @@
 #
 # 0.2.1: Added recognizing MOD, S3M and XM modules, and MIDI
 #        files. They're not (yet?) supported, but recognized.
+# 0.2.2: Experimental option --channels added
 # 
 ###############################################################
 #    Notes on making IT2AGI-compliant Impulse Tracker files   #
@@ -289,6 +290,8 @@ sub read_S3M() {
   die("$infile : Sorry, S3Ms are not yet supported.\n");
 }
 
+###########################################################################
+
 sub its_XM() {
   seek(INFILE,0x26,0);
   read(INFILE,my $buf,11);
@@ -301,14 +304,92 @@ sub read_XM() {
   die("$infile : Sorry, XMs are not yet supported.\n");
 }
 
+###########################################################################
+
 sub its_MID() {
   seek(INFILE,0,0);
   read(INFILE,my $buf,4);
   return ($buf eq "MThd");
 }
 sub read_MID() {
+  seek(INFILE,0,0);
+  $chunks=0;
+  do {
+    read(INFILE,my $chunktype,4);
+    read(INFILE,$_,4); $length = unpack("L>");
+    read(INFILE,my $chunkbuf,$length);
+    if ($chunktype eq "MThd") {
+      ## read header
+      my ($format,$ntrks,$div) = unpack("S>[3]",$buf);
+      my $divtype = $div & 0x8000;
+      if ($divtype==0) { $ticksperq = $div & 0x7FFF; }
+      else { ($negsmpte,$ticksperf)=(($div & 0x7F00)>>8,($div & 0x00FF)); }
+      print("Header: format $format, $ntrks tracks, ticksperq=$ticksperq, negsmpte=$negsmpte, ticksperf=$ticksperf\n");
+    } elsif ($chunktype eq "MTrk") {
+      open(my $bufread,'<',\$chunkbuf);
+      $tracks++;
+      print("Reading track $tracks, $length bytes\n");
+      do {
+        $delta = read_vlq($bufread);
+        printf("%5d: ",$delta);
+        read($bufread,$_,1); $status=unpack("C",$_);
+        if ($status&0x80) {
+          printf ("Status %08b  ",$status);
+        } else {
+          $status=$oldstatus; seek($bufread,-1,1); # keep old status, go back a byte
+          printf ("   ... %08b  ",$status);
+        }
+        $type=($status&0xF0)>>4;
+        $chan=($status&0x0F);
+        
+           if ($type==0b1000) { read($bufread,$_,2); ($k,$v)=unpack("CC"); print("$chan N-OF $k=$v "); }
+        elsif ($type==0b1001) { read($bufread,$_,2); ($k,$v)=unpack("CC"); print("$chan N-ON $k=$v "); }
+        elsif ($type==0b1010) { read($bufread,$_,2); ($k,$v)=unpack("CC"); print("$chan AFTT $k=$v "); }
+        elsif ($type==0b1011) { read($bufread,$_,2); ($k,$v)=unpack("CC"); print("$chan CTRL $k=$v "); }
+        elsif ($type==0b1100) { read($bufread,$_,1); $pc=unpack("C"); print("$chan PCHG $pc "); }
+        elsif ($type==0b1101) { read($bufread,$_,1); $v=ord($_); print("$chan AFTC $k=$v "); }
+        elsif ($type==0b1110) { read($bufread,$_,2); $v=ord($_); print("$chan PWHL $k=$v "); }
+        elsif ($status==0b11110000) { print "SSX0 "; $len=read_vlq(); read($bufread,$buf,$len); printf("[%s]",$buf); } # do { read($bufread,$buf,1); } until (ord($buf)==0b11110111); }
+        elsif ($status==0b11110111) { print "SSX1 "; $len=read_vlq(); read($bufread,$buf,$len); } # do { read($bufread,$buf,1); } until (ord($buf)==0b11110111); }
+        elsif ($status==0b11110010) { read($bufread,$buf,2); }
+        elsif ($status==0b11110011) { read($bufread,$buf,1); }
+        elsif ($status==0b11111111) { # meta 
+          read($bufread,$_,1); $meta=unpack("C",$_);
+          printf("META%02x ",$meta);
+             if ($meta==0x00) { read($bufread,$buf,1); printf("%02x SEQN",ord($buf)); }
+          elsif ($meta<=0x07) { $len=read_vlq($bufread); read($bufread,$buf,$len); printf("[%s]",$buf); }
+          elsif ($meta==0x20) { read($bufread,$buf,2); }
+          elsif ($meta==0x21) { read($bufread,$buf,2); }
+          elsif ($meta==0x2F) { read($bufread,$_,1); $v=unpack("C"); printf("%02x",$v); }
+          elsif ($meta==0x51) { read($bufread,$_,4); ($v,$t1,$t2,$t3)=unpack("C4"); $t=($t1<<16)+($t2<<8)+$t3; printf("%02x TMPO %d",$v,$t); }
+          elsif ($meta==0x54) { read($bufread,$buf,6); }
+          elsif ($meta==0x58) { read($bufread,$buf,5); }
+          elsif ($meta==0x59) { read($bufread,$_,3); ($v,$sf,$mi)=unpack("CcC"); printf("%02x SIGN %d %s",$v,$sf,($mi?"min":"maj")); }
+          elsif ($meta==0x7f) { $len=read_vlq($bufread); read($bufread,$buf,$len); printf("[%s]",$buf); }
+        }
+        else { printf ("Unknown status %08b\n",$status); }
+        print("\n");
+        $oldstatus=$status;
+        # $i++; if ($i==100) { die(); }
+      } until (eof($bufread));
+    }
+    $chunks++; die ("$infile : ERROR: too many chunks?") if ($chunks>100);
+  } until (eof(INFILE));
   die("$infile : Sorry, MIDs are not yet supported.\n");
 }
+sub read_vlq {
+  $FH = shift;
+  $out=0;
+  do {
+    read($FH,my $buf,1); $b = ord($buf);
+    #printf("[%02x]",$b);
+    $out = ($out<<7) + ($b & 0x7F);
+  } while ($b & 0x80);
+  #printf("=%3d ",$out);
+  return $out;
+}
+
+###########################################################################
 
 $rows=$arows;
 
