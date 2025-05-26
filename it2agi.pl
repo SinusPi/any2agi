@@ -395,6 +395,7 @@ sub read_vlq {
 
 if ($#pattern) {
   $rows=$arows;
+
   $tunedata=[];
 
   print "Using channels ".join(",",@CHANNELS)."\n";
@@ -422,7 +423,7 @@ if ($#pattern) {
         }
         $vol=$pattern[$row][$channel]{volpan};
 
-        push(@{$tunedata[$outchan]}, { row => $row, note => $note, rows => $notelen, vol => $vol });
+        push @{$tunedata[$outchan]}, { row => $row, note => $note, rows => $notelen, vol => $vol };
       }
     }
   }
@@ -432,41 +433,29 @@ if ($#pattern) {
 # Here we're expecting to have $tunedata[channel][]{row,note,rows,vol} to insert rests between notes.
 
 print "Pass 3: Inserting rests\n";
+$notedata = [];
 for ($channel=0; $channel<$NUMCH; $channel++) {
-  $in=0;
+  $notedata[$channel] = [];
   for ($nn=0; $nn<scalar(@{$tunedata[$channel]}); $nn++) {
     if ($nn==0) {
-      if ($tunedata[$channel][0]{row} == 0) {
-        $notedata[$channel][$in]{note} = $tunedata[$channel][0]{note};
-        $notedata[$channel][$in]{rows} = $tunedata[$channel][0]{rows};
-        $notedata[$channel][$in]{vol} = $tunedata[$channel][0]{vol};
-        $in++;
+      my $first_note = $tunedata[$channel][0];
+      if ($first_note->{row} == 0) {
+        push @{$notedata[$channel]}, $first_note;
       }
       else {
-        $notedata[$channel][$in]{note} = -1;
-        $notedata[$channel][$in]{rows} = $tunedata[$channel][0]{row};
-        $in++;
-        $notedata[$channel][$in]{note} = $tunedata[$channel][0]{note};
-        $notedata[$channel][$in]{rows} = $tunedata[$channel][0]{rows};
-        $notedata[$channel][$in]{vol} = $tunedata[$channel][0]{vol};
-        $in++;
+        push @{$notedata[$channel]}, { note => -1, rows => $first_note->{row} };
+        push @{$notedata[$channel]}, $first_note;
       }
     }
     else {
-      if ($tunedata[$channel][$nn]{row} - ($tunedata[$channel][$nn-1]{row}+$tunedata[$channel][$nn-1]{rows}) == 0) {
-        $notedata[$channel][$in]{note} = $tunedata[$channel][$nn]{note};
-        $notedata[$channel][$in]{rows} = $tunedata[$channel][$nn]{rows};
-        $notedata[$channel][$in]{vol} = $tunedata[$channel][$nn]{vol};
-        $in++;
+      my $current_note = $tunedata[$channel][$nn];
+      my $previous_note = $tunedata[$channel][$nn-1];
+      if ($current_note->{row} - ($previous_note->{row} + $previous_note->{rows}) == 0) {
+        push @{$notedata[$channel]}, $current_note;
       }
       else {
-        $notedata[$channel][$in]{note} = -1; #sinus: -1
-        $notedata[$channel][$in]{rows} = $tunedata[$channel][$nn]{row} - ($tunedata[$channel][$nn-1]{row}+$tunedata[$channel][$nn-1]{rows});
-        $in++;
-        $notedata[$channel][$in]{note} = $tunedata[$channel][$nn]{note};
-        $notedata[$channel][$in]{rows} = $tunedata[$channel][$nn]{rows};
-        $notedata[$channel][$in]{vol} = $tunedata[$channel][$nn]{vol};
-        $in++;
+        push @{$notedata[$channel]}, { note => -1, rows => $current_note->{row} - ($previous_note->{row} + $previous_note->{rows}) };
+        push @{$notedata[$channel]}, $current_note;
       }
     }
   }
@@ -537,7 +526,7 @@ for ($voice=0; $voice<$NUMCH; $voice++) {
     
     if ($DEBUG_AGI) { print("\n"); }
   }
-  print (" - Channel ".($voice+1).", ".$notelen[$voice]." notes.\n");
+  print (" - Channel ".($voice+1).", ".scalar(@{$notedata[$voice]})." notes.\n");
 }
 
 print "Writing AGI sound file to $outfile\n";
