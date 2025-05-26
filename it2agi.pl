@@ -390,91 +390,86 @@ sub read_vlq {
 }
 
 ###########################################################################
-# After reading a tracker module, we're expecting to have $pattern[$row][$channel]{note,instrument,volpan,command,param}.
+# After reading a tracker module, we're expecting to have a big $pattern[$row][$channel]{note,instrument,volpan,command,param} with all patterns glued.
 # NOT NEEDED when working with a MIDI file.
 
 if ($#pattern) {
   $rows=$arows;
+  $tunedata=[];
 
   print "Using channels ".join(",",@CHANNELS)."\n";
 
   print "Pass 2: Finding Note Lengths\n";
   for (my $outchan=0; $outchan<$NUMCH; $outchan++) {
+    $tunedata[$outchan] = [];
     $channel = $CHANNELS[$outchan]-1;
-    $nn=0;
     for ($row=0; $row<$rows; $row++) {
       $note=$pattern[$row][$channel]{note};
       if($note>0 && $note<120) { #exclude cuts and offs
-        if ($DEBUG_NOTES) { print($row.",".$pattern[$row][$channel]{note}.",".$pattern[$row][$channel]{length}.",".$pattern[$row][$channel]{volpan}."\n"); }
-          $notelen=-1; 
-          $srchrow=$row+1;
-          NOTESEARCH: while ($srchrow<$rows) {
-            if($pattern[$srchrow][$channel]{note}) {
-  #if ($channel==1) { print("$row note $note, found end at $srchrow: ".$pattern[$srchrow][$channel]{note}."\n"); }
-              $notelen=$srchrow-$row;
-              last NOTESEARCH;
-            }
-            $srchrow++;
+        if ($DEBUG_NOTES) { print($row.",".$pattern[$row][$channel]{note}.",".$pattern[$row][$channel]{rows}.",".$pattern[$row][$channel]{volpan}."\n"); }
+        $notelen=-1; 
+        $srchrow=$row+1;
+        NOTESEARCH: while ($srchrow<$rows) {
+          if($pattern[$srchrow][$channel]{note}) {
+            #if ($channel==1) { print("$row note $note, found end at $srchrow: ".$pattern[$srchrow][$channel]{note}."\n"); }
+            $notelen=$srchrow-$row;
+            last NOTESEARCH;
           }
-          if ($notelen==-1) {
-            $notelen=$rows-$row;
-          }
-          $vol=$pattern[$row][$channel]{volpan};
+          $srchrow++;
+        }
+        if ($notelen==-1) {
+          $notelen=$rows-$row;
+        }
+        $vol=$pattern[$row][$channel]{volpan};
 
-          $tunedata[$outchan][$nn]{row} = $row;
-          $tunedata[$outchan][$nn]{note} = $note;
-          $tunedata[$outchan][$nn]{length} = $notelen;
-          $tunedata[$outchan][$nn]{vol} = $vol;
-          $nn++;
+        push(@{$tunedata[$outchan]}, { row => $row, note => $note, rows => $notelen, vol => $vol });
       }
-      $tunelen[$outchan] = $nn;
     }
   }
 }
 
 #############################################################################################################
-# Here we're expecting to have $tunedata[channel][]{row,note,length,vol} to insert rests between notes.
+# Here we're expecting to have $tunedata[channel][]{row,note,rows,vol} to insert rests between notes.
 
 print "Pass 3: Inserting rests\n";
 for ($channel=0; $channel<$NUMCH; $channel++) {
   $in=0;
-  for ($nn=0; $nn<$tunelen[$channel]; $nn++) {
+  for ($nn=0; $nn<scalar(@{$tunedata[$channel]}); $nn++) {
     if ($nn==0) {
       if ($tunedata[$channel][0]{row} == 0) {
         $notedata[$channel][$in]{note} = $tunedata[$channel][0]{note};
-        $notedata[$channel][$in]{length} = $tunedata[$channel][0]{length};
+        $notedata[$channel][$in]{rows} = $tunedata[$channel][0]{rows};
         $notedata[$channel][$in]{vol} = $tunedata[$channel][0]{vol};
         $in++;
       }
       else {
         $notedata[$channel][$in]{note} = -1;
-        $notedata[$channel][$in]{length} = $tunedata[$channel][0]{row};
+        $notedata[$channel][$in]{rows} = $tunedata[$channel][0]{row};
         $in++;
         $notedata[$channel][$in]{note} = $tunedata[$channel][0]{note};
-        $notedata[$channel][$in]{length} = $tunedata[$channel][0]{length};
+        $notedata[$channel][$in]{rows} = $tunedata[$channel][0]{rows};
         $notedata[$channel][$in]{vol} = $tunedata[$channel][0]{vol};
         $in++;
       }
     }
     else {
-      if ($tunedata[$channel][$nn]{row} - ($tunedata[$channel][$nn-1]{row}+$tunedata[$channel][$nn-1]{length}) == 0) {
+      if ($tunedata[$channel][$nn]{row} - ($tunedata[$channel][$nn-1]{row}+$tunedata[$channel][$nn-1]{rows}) == 0) {
         $notedata[$channel][$in]{note} = $tunedata[$channel][$nn]{note};
-        $notedata[$channel][$in]{length} = $tunedata[$channel][$nn]{length};
+        $notedata[$channel][$in]{rows} = $tunedata[$channel][$nn]{rows};
         $notedata[$channel][$in]{vol} = $tunedata[$channel][$nn]{vol};
         $in++;
       }
       else {
         $notedata[$channel][$in]{note} = -1; #sinus: -1
-        $notedata[$channel][$in]{length} = $tunedata[$channel][$nn]{row} - ($tunedata[$channel][$nn-1]{row}+$tunedata[$channel][$nn-1]{length});
+        $notedata[$channel][$in]{rows} = $tunedata[$channel][$nn]{row} - ($tunedata[$channel][$nn-1]{row}+$tunedata[$channel][$nn-1]{rows});
         $in++;
         $notedata[$channel][$in]{note} = $tunedata[$channel][$nn]{note};
-        $notedata[$channel][$in]{length} = $tunedata[$channel][$nn]{length};
+        $notedata[$channel][$in]{rows} = $tunedata[$channel][$nn]{rows};
         $notedata[$channel][$in]{vol} = $tunedata[$channel][$nn]{vol};
         $in++;
       }
     }
   }
-  $notelen[$channel]=$in;
 }
 
 ###################################################################
@@ -487,19 +482,22 @@ if ($it && $is) {
   if (int($durmul)!=$durmul) {
     if ($durmul<int($durmul)+0.5) {$durmul=int($durmul)} else {$durmul=int($durmul)+1}
   }
+
+  for ($voice=0; $voice<$NUMCH; $voice++) {
+    for ($in=0; $in<scalar(@{$notedata[$voice]}); $in++) {
+      $notedata[$voice][$in]{length} = $notedata[$voice][$in]{rows} * $durmul;
+    }
+  }
 }
 
 print "Pass 4: Converting to AGI data\n";
+
 for ($voice=0; $voice<$NUMCH; $voice++) {
  if ($DEBUG_AGI) { print("Voice: ".$voice." ================================\n"); }
-  for ($in=0; $in<$notelen[$voice]; $in++) {
+  for ($in=0; $in<scalar(@{$notedata[$voice]}); $in++) {
     $note=$notedata[$voice][$in]{note}; if ($DEBUG_AGI) { print("n: ".$note."  "); }
-    $length=$notedata[$voice][$in]{length}; if ($DEBUG_AGI) { print("l: ".$length."  "); } # length as rows
-    $time=$notedata[$voice][$in]{time}; if ($DEBUG_AGI) { print("l: ".$length."  "); } # length as time
+    $length=$notedata[$voice][$in]{length}; if ($DEBUG_AGI) { print("l: ".$length."  "); } # length as time
     $vol=$notedata[$voice][$in]{vol}; if (!$vol) { $vol=64; }; if ($vol==64) { $vol=63; }
-    
-
-    $out_dur = $durmul ? $length*$durmul : $time;
 
     if ($voice<=2) {
       $freq=(440.0 * exp(($note-69)*log(2.0)/12.0));  #thanks to Lance Ewing!
@@ -522,7 +520,7 @@ for ($voice=0; $voice<$NUMCH; $voice++) {
     if ($voice<=2) {
       $out_freqdiv = $freq ? int(111860/$freq) : 0;
       $f = $out_freqdiv >> 4;
-      $v = 128+($vreg<<4)+($out_freqdiv%16);
+      $v = 128 + ($vreg<<4) + ($out_freqdiv%16);
     } else { # noise
       $f = 0;
       $v = 128 + 96 + ($out_noisetype<<2) + ($out_noisefreq);  # even octave: periodic, odd octave: noise. Notes = 4 noise types.
@@ -530,12 +528,11 @@ for ($voice=0; $voice<$NUMCH; $voice++) {
     die "overflow f $f" if ($f<0 || $f>255);  die "overflow v $v" if ($v<0 || $v>255);
     if ($DEBUG_AGI) { print("f$f v$v "); }
 
-    $areg=$vreg+1;
-    $a=128+($areg<<4)+$out_atten;
-    die "overflow a $a areg $areg ".($areg<<4)." atten $out_atten" if ($a<0 || $a>255);
+    $a=128 + (($vreg|1)<<4) + $out_atten;
+    die "overflow a $a areg $vreg ".(($vreg|1)<<4)." atten $out_atten" if ($a<0 || $a>255);
     if ($DEBUG_AGI) { print("a".$a." "); }
 
-    $packet = pack("SCCC",$out_dur,$f,$v,$a);
+    $packet = pack("SCCC",$length,$f,$v,$a);
     $snddata[$voice] = $snddata[$voice].$packet;
     
     if ($DEBUG_AGI) { print("\n"); }
