@@ -498,39 +498,39 @@ for ($voice=0; $voice<$NUMCH; $voice++) {
     $time=$notedata[$voice][$in]{time}; if ($DEBUG_AGI) { print("l: ".$length."  "); } # length as time
     $vol=$notedata[$voice][$in]{vol}; if (!$vol) { $vol=64; }; if ($vol==64) { $vol=63; }
     
-    $volout=15;
-    if ($vol<=63) { $volout=$vol>>2; } else { $volout=15; }
-    if ($note==-1) { $volout=0; } #rest
-    if ($DEBUG_AGI) { print("v: ".$volout."  "); }
+
+    $out_dur = $durmul ? $length*$durmul : $time;
 
     $freq=(440.0 * exp(($note-69)*log(2.0)/12.0));  #thanks to Lance Ewing!
     if (int($freq)!=$freq) {
       if ($freq<int($freq)+0.5) {} else {$freq=int($freq)+1}
     }
+    if ($note==-1) { $freq=0; }
     
+    $volbase=15;
+    if ($vol<=63) { $volbase=$vol>>2; } else { $volbase=15; }
+    if ($note==-1) { $volbase=0; } #rest
+    if ($DEBUG_AGI) { print("v: ".$volbase."  "); }
+    $out_atten = 15-$volbase;
+
     $bytes={" "," "," "," "," "};
     
-    if ($durmul) {
-      $dur = $length*$durmul;
-    } else {
-      $dur = $time;
-    }
-    $d=int($dur >> 8);
-    $d2=$dur % 256;
+    $d=int($out_dur >> 8);
+    $d2=$out_dur % 256;
     if ($DEBUG_AGI) { print("d".$d." "); }
     if ($DEBUG_AGI) { print("D".$d2." "); }
     $bytes[0]=chr($d2); # buf
     $bytes[1]=chr($d);  # buf
     
-    if ($note==-1) { $freqdiv=0; } else { $freqdiv=int(111860/$freq); }
-    $vreg=0;
-    if ($voice==0) {$vreg=0}
-    if ($voice==1) {$vreg=2}
-    if ($voice==2) {$vreg=4}
-    if ($voice==3) {$vreg=6}
-    $f=$freqdiv >> 4;
-    $v=128+($vreg<<4)+($freqdiv%16);
-    if ($voice==3) { $f=0; $v = 128 + 96 + 4*(int($note/12)%2) + ($note%4); } # even octave: periodic, odd octave: noise. Notes = 4 noise types.
+    $vreg=$voice<<1;
+    if ($voice<=2) {
+      $out_freqdiv = $freq ? int(111860/$freq) : 0;
+      $f = $out_freqdiv >> 4;
+      $v = 128+($vreg<<4)+($out_freqdiv%16);
+    } else { # noise
+      $f = 0;
+      $v = 128 + 96 + 4*(int($note/12)%2) + ($note%4);  # even octave: periodic, odd octave: noise. Notes = 4 noise types.
+    }
     die "overflow f $f" if ($f<0 || $f>255);
     die "overflow v $v" if ($v<0 || $v>255);
     if ($DEBUG_AGI) { print("f".$f." "); }
@@ -538,10 +538,9 @@ for ($voice=0; $voice<$NUMCH; $voice++) {
     $bytes[2]=chr($f); # buf
     $bytes[3]=chr($v); # buf
 
-    $atten=15-$volout;
     $areg=$vreg+1;
-    $a=128+($areg<<4)+$atten;
-    die "overflow a $a areg $areg ".($areg<<4)." atten $atten" if ($a<0 || $a>255);
+    $a=128+($areg<<4)+$out_atten;
+    die "overflow a $a areg $areg ".($areg<<4)." atten $out_atten" if ($a<0 || $a>255);
     if ($DEBUG_AGI) { print("a".$a." "); }
     $bytes[4]=chr($a); # buf
 
