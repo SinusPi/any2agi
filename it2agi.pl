@@ -107,7 +107,10 @@ $v = shift @ARGV;
 if ($v eq "--debug-it") { $DEBUG_IT=1; $v = shift @ARGV; }
 if ($v eq "--debug-agi") { $DEBUG_AGI=1; $v = shift @ARGV; }
 if ($v eq "--debug-out") { $DEBUG_OUT=1; $v = shift @ARGV; }
+
 if ($v eq "--channels") { @CHANNELS = split(",",shift @ARGV); $v = shift @ARGV; }
+if ($v eq "--tempo_even") { $tempomode_override="even"; $v = shift @ARGV; }
+if ($v eq "--tempo_exact") { $tempomode_override="exact"; $v = shift @ARGV; }
 
 $NUMCH=$#CHANNELS+1;
 
@@ -400,11 +403,21 @@ if ($#pattern) {
 
   print "Pass 2: Finding Note Lengths\n";
 
+  $tempomode = $tempomode_override || "even";
+  
   $tempo=$it;
   $speed=$is;
-  print "Using tempo $it speed $is\n";
-  $durmul = 9*($speed/8)*(140/$tempo);
-  $durmul = int($durmul+0.5);
+  $rowdur_ms = (2500 / $it) * $is;
+  printf "Using tempo %d speed %d, 'classic' tempo: 1 row = %.2f ms\n",$it,$is,$rowdur_ms;
+  if ($tempomode eq "even") {
+    $rowdur_agi = 1000/60;
+    $mul = int($rowdur_ms/$rowdur_agi + 0.5); if ($mul<1) { $mul=1; }
+    $rowdur_ms = $mul*$rowdur_agi;
+    printf "Tempo mode is 'even', row = %d AGI ticks (%.2f ms)\n",$mul,$rowdur_ms;
+  } else {
+    print "Tempo mode is 'exact', row playback may be uneven.\n";
+  }
+
   
   for (my $outchan=0; $outchan<$NUMCH; $outchan++) {
     $tunedata[$outchan] = [];
@@ -425,7 +438,8 @@ if ($#pattern) {
         }
         $vol=$pattern[$row][$channel]{volpan};
 
-        push @{$tunedata[$outchan]}, { note => $note, vol => $vol,   row => $row, rows => $notelen,    start => $row*$durmul, length => $notelen*$durmul };
+        push @{$tunedata[$outchan]}, { note => $note, vol => $vol,   row => $row, rows => $notelen,    start => $row*$rowdur_ms, length => $notelen*$rowdur_ms };
+        #printf ("%.2f %.2f\n",$row*$rowdur_ms,$notelen*$rowdur_ms);
       }
     }
   }
@@ -452,7 +466,7 @@ for ($channel=0; $channel<$NUMCH; $channel++) {
     else {
       my $current_note = $tunedata[$channel][$nn];
       my $previous_note = $tunedata[$channel][$nn-1];
-      if ($current_note->{start} - ($previous_note->{start} + $previous_note->{length}) == 0) {
+      if ($current_note->{start} - ($previous_note->{start} + $previous_note->{length}) < 0.001) { # precise enough
         push @{$notedata[$channel]}, $current_note;
       }
       else {
@@ -470,11 +484,18 @@ print "Pass 4: Converting to AGI data\n";
 
 for ($voice=0; $voice<$NUMCH; $voice++) {
  if ($DEBUG_AGI) { print("Voice: ".$voice." ================================\n"); }
+  $prev_dur_frac=0;
   for ($in=0; $in<scalar(@{$notedata[$voice]}); $in++) {
-    $note=$notedata[$voice][$in]{note}; if ($DEBUG_AGI) { print("n: ".$note."  "); }
-    $length=$notedata[$voice][$in]{length}; if ($DEBUG_AGI) { print("l: ".$length."  "); } # length as time
+    $note=$notedata[$voice][$in]{note}; if ($DEBUG_AGI) { printf("n:%3d  ",$note); }
+    $length=$notedata[$voice][$in]{length}; if ($DEBUG_AGI) { printf("l:%7.1f  ",$length); } # length as time in ms
     $vol=$notedata[$voice][$in]{vol}; if (!$vol) { $vol=64; }; if ($vol==64) { $vol=63; }
 
+    $duration_f = $length / 16.66667;
+    $duration = int($duration_f + $prev_dur_frac + 0.5); if ($duration<=0) { $duration=1; }
+    $prev_dur_frac = $duration_f-$duration;
+    #printf("%d ",$duration);
+
+    $freq=$out_noisefreq=0;
     if ($voice<=2) {
       $freq=(440.0 * exp(($note-69)*log(2.0)/12.0));  #thanks to Lance Ewing!
       if (int($freq)!=$freq) {
@@ -489,7 +510,6 @@ for ($voice=0; $voice<$NUMCH; $voice++) {
     $volbase=15;
     if ($vol<=63) { $volbase=$vol>>2; } else { $volbase=15; }
     if ($note==-1) { $volbase=0; } #rest
-    if ($DEBUG_AGI) { print("v: ".$volbase."  "); }
     $out_atten = 15-$volbase;
 
     $vreg=$voice<<1;
@@ -502,16 +522,14 @@ for ($voice=0; $voice<$NUMCH; $voice++) {
       $v = 128 + 96 + ($out_noisetype<<2) + ($out_noisefreq);  # even octave: periodic, odd octave: noise. Notes = 4 noise types.
     }
     die "overflow f $f" if ($f<0 || $f>255);  die "overflow v $v" if ($v<0 || $v>255);
-    if ($DEBUG_AGI) { print("f$f v$v "); }
 
     $a=128 + (($vreg|1)<<4) + $out_atten;
     die "overflow a $a areg $vreg ".(($vreg|1)<<4)." atten $out_atten" if ($a<0 || $a>255);
-    if ($DEBUG_AGI) { print("a".$a." "); }
 
-    $packet = pack("SCCC",$length,$f,$v,$a);
+    $packet = pack("SCCC",$duration,$f,$v,$a);
     $snddata[$voice] = $snddata[$voice].$packet;
     
-    if ($DEBUG_AGI) { print("\n"); }
+    if ($DEBUG_AGI) { printf(" = d %3d f %4d v %3d = %02x %02x %02x %02x %02x\n",$duration,$freq+$out_noisefreq,$vol,ord(substr($packet,0,1)),ord(substr($packet,1,1)),$f,$v,$a); }
   }
   print (" - Channel ".($voice+1).", ".scalar(@{$notedata[$voice]})." notes.\n");
 }
@@ -524,6 +542,7 @@ print FILE "\x08\x00";
 $fpos=8;
 
 for ($ch=0;$ch<3;$ch++) {
+  if (length($snddata)%5!=0) { die("ERROR: Channel $ch output has wrong length\n"); }
   $fpos+=length($snddata[$ch])+2;
   print FILE pack("S",$fpos);
 }
