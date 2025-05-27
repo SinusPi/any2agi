@@ -110,7 +110,6 @@ while ($v = shift @ARGV) {
   elsif ($v eq "--debug-agi") { $DEBUG_AGI=1; }
   elsif ($v eq "--debug-out") { $DEBUG_OUT=1; }
   elsif ($v eq "--channels") { @CHANNELS = split(",",shift @ARGV); }
-  elsif ($v eq "--tempo-even") { $tempomode_override="even"; }
   elsif ($v eq "--tempo-exact") { $tempomode_override="exact"; }
   else {
     if (!$infile) { $infile = $v; } else { $outfile = $v; }
