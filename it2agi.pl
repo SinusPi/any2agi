@@ -103,23 +103,28 @@ print "\n";
 if($ARGV[0] eq "") {
   die ("To run IT2AGI, give the name of an Impulse Tracker module as an\nargument.\n\nStopped at");
 }
-$v = shift @ARGV;
-if ($v eq "--debug-it") { $DEBUG_IT=1; $v = shift @ARGV; }
-if ($v eq "--debug-agi") { $DEBUG_AGI=1; $v = shift @ARGV; }
-if ($v eq "--debug-out") { $DEBUG_OUT=1; $v = shift @ARGV; }
-
-if ($v eq "--channels") { @CHANNELS = split(",",shift @ARGV); $v = shift @ARGV; }
-if ($v eq "--tempo_even") { $tempomode_override="even"; $v = shift @ARGV; }
-if ($v eq "--tempo_exact") { $tempomode_override="exact"; $v = shift @ARGV; }
+while ($v = shift @ARGV) {
+  print "[$v]\n";
+  if ($v eq "--debug-it") { $DEBUG_IT=1; }
+  elsif ($v eq "--debug-agi") { $DEBUG_AGI=1; }
+  elsif ($v eq "--debug-out") { $DEBUG_OUT=1; }
+  elsif ($v eq "--channels") { @CHANNELS = split(",",shift @ARGV); }
+  elsif ($v eq "--tempo-even") { $tempomode_override="even"; }
+  elsif ($v eq "--tempo-exact") { $tempomode_override="exact"; }
+  else {
+    if (!$infile) { $infile = $v; } else { $outfile = $v; }
+  }
+}
 
 $NUMCH=$#CHANNELS+1;
 
-$infile = $v;
+
 open(INFILE, "<".$infile);
 binmode(INFILE);
 
-$outfile = shift @ARGV;
 if (!$outfile) { $outfile=$infile; $outfile =~ s/\..+$/.AGS/; }
+
+print("Input: $infile  Output: $outfile\n");
 
 # READING
 
@@ -491,7 +496,7 @@ for ($voice=0; $voice<$NUMCH; $voice++) {
     $vol=$notedata[$voice][$in]{vol}; if (!$vol) { $vol=64; }; if ($vol==64) { $vol=63; }
 
     $duration_f = $length / 16.66667;
-    $duration = int($duration_f + $prev_dur_frac + 0.5); if ($duration<=0) { $duration=1; }
+    $duration = int($duration_f + $prev_dur_frac + 0.5); if ($duration<=0) { $duration=0; }
     $prev_dur_frac = $duration_f-$duration;
     #printf("%d ",$duration);
 
