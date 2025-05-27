@@ -63,6 +63,7 @@
 # 0.2.1: Added recognizing MOD, S3M and XM modules, and MIDI
 #        files. They're not (yet?) supported, but recognized.
 # 0.2.2: Experimental option --channels added
+# 0.2.3: Tempo mode added: --tempo-even or --tempo-exact
 # 
 ###############################################################
 #    Notes on making IT2AGI-compliant Impulse Tracker files   #
@@ -96,7 +97,7 @@
 
 @CHANNELS=(1,2,3,4);
 
-print "IT2AGI version 0.2.1\n";
+print "IT2AGI version 0.2.3\n";
 print "(c) 1999-2000 Nat Budin - portions by Lance Ewing\n";
 print "Fixes 2025 by Adam 'Sinus' Skawinski\n";
 print "\n";
