@@ -234,7 +234,7 @@ sub read_IT() {
 
       if ($mvar & 16) {
         $pattern[$arow][$channel]{note} = $lastval[$channel]{note};
-        if ($DEBUG_IT) { print($arow.": WTF? ch".$channel." n prev\n"); }
+        # if ($DEBUG_IT) { print($arow.": WTF? ch".$channel." n prev\n"); }
       }
       if ($mvar & 32) {
         $pattern[$arow][$channel]{instrument} = $lastval[$channel]{instrument};
@@ -497,7 +497,7 @@ for ($voice=0; $voice<$NUMCH; $voice++) {
   for ($in=0; $in<scalar(@{$notedata[$voice]}); $in++) {
     $note=$notedata[$voice][$in]{note}; if ($DEBUG_AGI) { printf("n:%3d  ",$note); }
     $length=$notedata[$voice][$in]{length}; if ($DEBUG_AGI) { printf("l:%7.1f  ",$length); } # length as time in ms
-    $vol=$notedata[$voice][$in]{vol}; if (!$vol) { $vol=64; }; if ($vol==64) { $vol=63; }
+    $vol=$notedata[$voice][$in]{vol}; if (!defined($vol)) { $vol=64; }; if ($vol==64) { $vol=63; }
 
     $duration_f = $length / 16.66667;
     $duration = int($duration_f + $prev_dur_frac + 0.5); if ($duration<=0) { $duration=0; }
