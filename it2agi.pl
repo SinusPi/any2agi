@@ -402,6 +402,7 @@ if ($#pattern) {
 
   $tempo=$it;
   $speed=$is;
+  print "Using tempo $it speed $is\n";
   $durmul = 9*($speed/8)*(140/$tempo);
   $durmul = int($durmul+0.5);
   
