@@ -327,6 +327,12 @@ sub read_MID() {
     read(INFILE,my $chunktype,4);
     read(INFILE,$_,4); $length = unpack("L>");
     read(INFILE,my $chunkbuf,$length);
+
+    $midinotes=[];
+
+    my @readchans;
+    for (my $ch=0;$ch<$NUMCH;$ch++) { $readchans[$CHANNELS[$ch]]=1; }
+
     if ($chunktype eq "MThd") {
       ## read header
       my ($format,$ntrks,$div) = unpack("S>[3]",$buf);
@@ -338,7 +344,8 @@ sub read_MID() {
       open(my $bufread,'<',\$chunkbuf);
       $tracks++;
       print("Reading track $tracks, $length bytes\n");
-      do {
+      $totaltime=0;
+      do {{
         $delta = read_vlq($bufread);
         printf("%5d: ",$delta);
         read($bufread,$_,1); $status=unpack("C",$_);
@@ -350,9 +357,12 @@ sub read_MID() {
         }
         $type=($status&0xF0)>>4;
         $chan=($status&0x0F);
-        
-           if ($type==0b1000) { read($bufread,$_,2); ($k,$v)=unpack("CC"); print("$chan N-OF $k=$v "); }
-        elsif ($type==0b1001) { read($bufread,$_,2); ($k,$v)=unpack("CC"); print("$chan N-ON $k=$v "); }
+        $oldstatus=$status;
+
+        $totaltime+=$delta;
+
+           if ($type==0b1001) { read($bufread,$_,2); ($k,$v)=unpack("CC"); print("$chan N-ON $k=$v "); if (!defined($last[$chan])) { $last[$chan] = { note=>$k, vol=>$v, start=>$totaltime }; print "<<."; } }
+        elsif ($type==0b1000) { read($bufread,$_,2); ($k,$v)=unpack("CC"); print("$chan N-OF $k=$v "); if ($last[$chan]{note}==$k) { $last[$chan]{length} = $totaltime-$last[$chan]{start}; push @{$mididata[$chan]}, $last[$chan]; print "<<'"; undef $last[$chan]; } }
         elsif ($type==0b1010) { read($bufread,$_,2); ($k,$v)=unpack("CC"); print("$chan AFTT $k=$v "); }
         elsif ($type==0b1011) { read($bufread,$_,2); ($k,$v)=unpack("CC"); print("$chan CTRL $k=$v "); }
         elsif ($type==0b1100) { read($bufread,$_,1); $pc=unpack("C"); print("$chan PCHG $pc "); }
@@ -378,13 +388,11 @@ sub read_MID() {
         }
         else { printf ("Unknown status %08b\n",$status); }
         print("\n");
-        $oldstatus=$status;
         # $i++; if ($i==100) { die(); }
-      } until (eof($bufread));
+      }} until (eof($bufread));
     }
     $chunks++; die ("$infile : ERROR: too many chunks?") if ($chunks>100);
   } until (eof(INFILE));
-  die("$infile : Sorry, MIDs are not yet supported.\n");
 }
 sub read_vlq {
   $FH = shift;
@@ -402,7 +410,7 @@ sub read_vlq {
 # After reading a tracker module, we're expecting to have a big $pattern[$row][$channel]{note,instrument,volpan,command,param} with all patterns glued.
 # NOT NEEDED when working with a MIDI file.
 
-if ($#pattern) {
+if (@pattern) {
   $tunedata=[];
 
   print "Using channels ".join(",",@CHANNELS)."\n";
@@ -451,10 +459,26 @@ if ($#pattern) {
       }
     }
   }
+} else {
+  # MIDI!
+  for (my $outchan=0; $outchan<$NUMCH; $outchan++) {
+    $tunedata[$outchan] = [];
+    $channel = $CHANNELS[$outchan]-1;
+    $mididata[$channel] = [ sort { $a->{start} <=> $b->{start} } @{$mididata[$channel]} ];
+    $tunedata[$outchan] = $mididata[$channel];
+  }
 }
 
+# for ($channel=0; $channel<$NUMCH; $channel++) {
+#   printf "Channel %d:\n",$channel;
+#   for ($nn=0; $nn<scalar(@{$tunedata[$channel]}); $nn++) {
+#     $no=$tunedata[$channel][$nn];
+#     printf "%3d. start %5d, len %5d, note %d\n",$nn,$no->{start},$no->{length},$no->{note};
+#   }
+# }
+
 #############################################################################################################
-# Here we're expecting to have $tunedata[channel][]{row,note,rows,vol} to insert rests between notes.
+# Here we're expecting to have $tunedata[channel][]{row,note,rows,vol,start,length} to insert rests between notes.
 
 print "Pass 3: Inserting rests\n";
 $notedata = [];
@@ -474,10 +498,13 @@ for ($channel=0; $channel<$NUMCH; $channel++) {
     else {
       my $current_note = $tunedata[$channel][$nn];
       my $previous_note = $tunedata[$channel][$nn-1];
+
+      # PREVENT OVERLAPS
+      #if ($previous_note->{start} + $previous_note->{length} > $current_note->{start}) { $previous_note->{length} = $current_note->{start}-$previous_note->{start}; }
+
       if ($current_note->{start} - ($previous_note->{start} + $previous_note->{length}) < 0.001) { # precise enough
         push @{$notedata[$channel]}, $current_note;
-      }
-      else {
+      } else {
         push @{$notedata[$channel]}, { note => -1, length => $current_note->{start} - ($previous_note->{start} + $previous_note->{length}) };
         push @{$notedata[$channel]}, $current_note;
       }
@@ -501,7 +528,7 @@ for ($voice=0; $voice<$NUMCH; $voice++) {
     # prepare duration
 
     $duration_f = $length / 16.66667;
-    $out_duration = int($duration_f + $prev_dur_frac + 0.5); if ($out_duration<0) { $out_duration=0; }
+    $out_duration = int($duration_f + $prev_dur_frac + 0.5); if ($out_duration<1) { $out_duration=1; }
     $prev_dur_frac = $duration_f - $out_duration; # used in 'exact' tempo mode
     
     # prepare frequency
@@ -509,12 +536,13 @@ for ($voice=0; $voice<$NUMCH; $voice++) {
     $freq=$out_noisefreq=0;
     $vreg=$voice<<1;
     if ($voice<=2) { # voice channel
+      while ($note>=0 && $note<45) { $note+=12; }
       $freq=(440.0 * exp(($note-69)*log(2.0)/12.0));  #thanks to Lance Ewing!
       if (int($freq)!=$freq) {
         if ($freq<int($freq)+0.5) {} else {$freq=int($freq)+1}
       }
       $out_freqdiv = $freq ? int(111860/$freq) : 0;
-      if ($note==-1) { $out_freqdiv=0; }
+      if ($note==-1) { $freq=0; $out_freqdiv=0; }
       
       $out_fv = $out_freqdiv >> 4;
       $out_fc = 128 + ($vreg<<4) + ($out_freqdiv%16);
