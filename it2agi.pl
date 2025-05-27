@@ -498,29 +498,31 @@ for ($voice=0; $voice<$NUMCH; $voice++) {
     $length=$notedata[$voice][$in]{length}; if ($DEBUG_AGI) { printf("l:%7.1f  ",$length); } # length as time in ms
     $vol=$notedata[$voice][$in]{vol}; if (!defined($vol) || $vol>63) { $vol=63; }
 
-    $duration_f = $length / 16.66667;
-    $duration = int($duration_f + $prev_dur_frac + 0.5); if ($duration<=0) { $duration=0; }
-    $prev_dur_frac = $duration_f-$duration;
-    #printf("%d ",$duration);
+    # prepare duration
 
+    $duration_f = $length / 16.66667;
+    $out_duration = int($duration_f + $prev_dur_frac + 0.5); if ($out_duration<0) { $out_duration=0; }
+    $prev_dur_frac = $duration_f - $out_duration; # used in 'exact' tempo mode
+    
+    # prepare frequency
+    
     $freq=$out_noisefreq=0;
+    $vreg=$voice<<1;
     if ($voice<=2) { # voice channel
       $freq=(440.0 * exp(($note-69)*log(2.0)/12.0));  #thanks to Lance Ewing!
       if (int($freq)!=$freq) {
         if ($freq<int($freq)+0.5) {} else {$freq=int($freq)+1}
       }
+      $out_freqdiv = $freq ? int(111860/$freq) : 0;
+      if ($note==-1) { $out_freqdiv=0; }
+      
+      $out_fv = $out_freqdiv >> 4;
+      $out_fc = 128 + ($vreg<<4) + ($out_freqdiv%16);
     } else { # noise channel
       $out_noisetype = int($note/12)%2;
       $out_noisefreq = $note%4;
-    }
-    if ($note==-1) { $freq=0; }
-    
-    $vreg=$voice<<1;
-    if ($voice<=2) {
-      $out_freqdiv = $freq ? int(111860/$freq) : 0;
-      $out_fv = $out_freqdiv >> 4;
-      $out_fc = 128 + ($vreg<<4) + ($out_freqdiv%16);
-    } else { # noise
+      if ($note==-1) { $out_noisetype=$out_noisefreq=0; }
+      
       $out_fv = 0;
       $out_fc = 128 + 96 + ($out_noisetype<<2) + ($out_noisefreq);  # even octave: periodic, odd octave: noise. Notes = 4 noise types.
     }
@@ -531,10 +533,10 @@ for ($voice=0; $voice<$NUMCH; $voice++) {
     die "overflow f $out_fv" if ($out_fv<0 || $out_fv>255);  die "overflow v $out_fc" if ($out_fc<0 || $out_fc>255);
     die "overflow a $out_att areg $vreg ".(($vreg|1)<<4)." atten $out_atten" if ($out_att<0 || $out_att>255);
 
-    $packet = pack("SCCC",$duration,$out_fv,$out_fc,$out_att);
+    $packet = pack("SCCC",$out_duration,$out_fv,$out_fc,$out_att);
     $snddata[$voice] = $snddata[$voice].$packet;
     
-    if ($DEBUG_AGI) { printf(" = d %3d f %4d v %3d = %02x %02x %02x %02x %02x\n",$duration,$freq+$out_noisefreq,$vol,ord(substr($packet,0,1)),ord(substr($packet,1,1)),$out_fv,$out_fc,$out_att); }
+    if ($DEBUG_AGI) { printf(" = d %3d f %4d v %3d = %02x %02x %02x %02x %02x\n",$out_duration,$freq+$out_noisefreq,$vol,ord(substr($packet,0,1)),ord(substr($packet,1,1)),$out_fv,$out_fc,$out_att); }
   }
   print (" - Channel ".($voice+1).", ".scalar(@{$notedata[$voice]})." notes.\n");
 }
