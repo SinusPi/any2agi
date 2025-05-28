@@ -113,12 +113,16 @@ while ($v = shift @ARGV) {
   elsif ($v eq "--channels") { @CHANNELS = split(",",shift @ARGV); }
   elsif ($v eq "--tempo-exact") { $tempomode_override="exact"; }
   elsif ($v eq "--auto-drum-offs") { $auto_drum_offs = shift @ARGV; }
+  elsif ($v eq "--instr-drum") { $instr = shift @ARGV; $drumnote = shift @ARGV; $INSTRDRUM[$instr]=$drumnote; }
+  elsif ($v eq "--instr-oct") { $instr = shift @ARGV; $octave = shift @ARGV; $INSTROCT[$instr]=$octave; }
   else {
     if (!$infile) { $infile = $v; } else { $outfile = $v; }
   }
 }
 
 $NUMCH=$#CHANNELS+1;
+
+$AGI_TICK = 16.66667;
 
 
 open(INFILE, "<".$infile);
@@ -333,9 +337,12 @@ sub read_MOD() {
           if ($DEBUG_INPUT) { printf "        "; }
           next;
         }
-        $note = { note=>$periodtonote{$period} || -1 };
-        if ($command==0x0C) { $note->{volpan}=$args; }
-        $pattern[$arow+$row][$chan] = $note;
+        $note = $periodtonote{$period} || -1;
+        if ($note>0 && $INSTROCT[$samplenum])  { $note+=$INSTROCT[$samplenum]; }
+        if ($note>0 && $INSTRDRUM[$samplenum]) { $note=$INSTRDRUM[$samplenum]; }
+        $notedata = { note=>$note };
+        if ($command==0x0C) { $notedata->{volpan}=$args; }
+        $pattern[$arow+$row][$chan] = $notedata;
         
         if ($DEBUG_INPUT) { printf "%02d %1X%02x  ",$periodtonote{$period},$command,$args }
       }
@@ -514,9 +521,15 @@ if (@pattern) {
         }
         $vol=$pattern[$row][$channel]{volpan};
 
-        if ($outchan==3 && $auto_drum_offs && $notelen>$auto_drum_offs) { $notelen = $auto_drum_offs; }
+        my $start = $row*$rowdur_ms;
+        my $length = $notelen*$rowdur_ms;
 
-        push @{$tunedata[$outchan]}, { note => $note, vol => $vol,   row => $row, rows => $notelen,    start => $row*$rowdur_ms, length => $notelen*$rowdur_ms };
+        my $pauselength;
+        my $drumticks = $auto_drum_offs*$AGI_TICK;
+        if ($outchan==3 && $auto_drum_offs && $length>$DRUMTICKS+1) { ($length,$pauselength) = ($drumticks, $length - $drumticks); }
+
+        push @{$tunedata[$outchan]}, { note => $note, vol => $vol,   row => $row, rows => $notelen,    start => $start, length => $length };
+        if ($pauselength) { push @{$tunedata[$outchan]}, { note => 0, vol => 0,   row => $row, rows => $notelen,    start => $start+$length, length => $pauselength }; }
         
         #if (1) { print($row.",".$pattern[$row][$channel]{note}.",".$pattern[$row][$channel]{rows}.",".$pattern[$row][$channel]{volpan}."\n"); }
         #printf ("%.2f %.2f\n",$row*$rowdur_ms,$notelen*$rowdur_ms);
@@ -604,7 +617,7 @@ for ($voice=0; $voice<$NUMCH; $voice++) {
 
     # prepare duration
 
-    $duration_f = $length / 16.66667;
+    $duration_f = $length / $AGI_TICK;
     $out_duration = int($duration_f + $prev_dur_frac + 0.5); if ($out_duration<1) { $out_duration=1; }
     $prev_dur_frac = $duration_f - $out_duration; # used in 'exact' tempo mode
     
