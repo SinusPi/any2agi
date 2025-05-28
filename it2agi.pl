@@ -319,18 +319,26 @@ sub read_MOD() {
   for (my $pos=0;$pos<$songlen;$pos++) {
     $pat = $songpats[$pos];
     seek(INFILE,$patdataoffset + $patdatalen*$pat,0);
-    #print "reading pat ".$pat."\n";
+    print "reading pat ".$pat."\n";
     for (my $row=0;$row<$modpatlen;$row++) {
-      #printf "%d %d %d = ",$pos,$row,$arow+$row;
+      printf "%02d = ",$row;
       for (my $chan=0;$chan<$modchannels;$chan++) {
         read(INFILE,$_,4); my ($b1,$b2,$b3,$b4) = unpack("CCCC");
-        $samplenum = ($b1&0xF0) | ($b3>>4); if (!$samplenum) { next; }
+        $samplenum = ($b1&0xF0) | ($b3>>4);
         $period = (($b1&0x0F)<<8) | $b2;
-        $command = $b4;
-        $pattern[$arow+$row][$chan] = { note=>$periodtonote{$period} || -1, volpan=>63 };
-        #printf "%d=%d ",$period,$periodtonote{$period} || -1
+        $command = $b3&0x0F;
+        $args = $b4;
+        if (!$samplenum && !$period && !$command) {
+          printf "        ";
+          next;
+        }
+        $note = { note=>$periodtonote{$period} || -1 };
+        if ($command==0x0C) { $note->{volpan}=$args; }
+        $pattern[$arow+$row][$chan] = $note;
+        
+        printf "%02d %1X%02x  ",$periodtonote{$period},$command,$args
       }
-      #print "\n";
+      print "\n";
     }
     $arow+=$modpatlen;
   }
@@ -497,6 +505,7 @@ if ($#pattern) {
         if ($outchan==3 && $auto_drum_offs && $notelen>$auto_drum_offs) { $notelen = $auto_drum_offs; }
 
         push @{$tunedata[$outchan]}, { note => $note, vol => $vol,   row => $row, rows => $notelen,    start => $row*$rowdur_ms, length => $notelen*$rowdur_ms };
+        
         #if (1) { print($row.",".$pattern[$row][$channel]{note}.",".$pattern[$row][$channel]{rows}.",".$pattern[$row][$channel]{volpan}."\n"); }
         #printf ("%.2f %.2f\n",$row*$rowdur_ms,$notelen*$rowdur_ms);
       }
