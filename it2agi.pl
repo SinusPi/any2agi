@@ -66,6 +66,9 @@
 # 0.2.3: Tempo mode added: --tempo-exact
 # 0.2.4: Auto drum note-offs added: --auto-drum-offs 1/2/3...
 # 0.2.5: very basic MOD and MIDI support added
+# 0.2.6: --auto-drum-offs now use AGI ticks for scale, not rows
+#        --instr-drum 1 13  - remap IT/MOD instrument 1 to drum
+#          note 13 (13,14,15 are noises, 1,2,3 are buzzes)
 # 
 ###############################################################
 #    Notes on making IT2AGI-compliant Impulse Tracker files   #
@@ -99,7 +102,7 @@
 
 @CHANNELS=(1,2,3,4);
 
-print "IT2AGI version 0.2.5\n";
+print "IT2AGI version 0.2.6\n";
 print "(c) 1999-2000 Nat Budin - portions by Lance Ewing\n";
 print "Fixes 2025 by Adam 'Sinus' Skawinski\n";
 print "\n";
