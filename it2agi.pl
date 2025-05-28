@@ -282,9 +282,59 @@ sub its_MOD() {
 }
 sub read_MOD() {
   seek(INFILE,0,0);
-  read(INFILE,my $title,0x14);
+  read(INFILE,my $title,20);
   print("Reading Protracker module '$title'...\n");
-  die("$infile : Sorry, MODs are not yet supported.\n");
+  # samples, ignore
+  for (my $sn=0;$sn<31;$sn++) {
+    read(INFILE,my $sname,22);
+    read(INFILE,my $slen,2);
+    read(INFILE,my $stune,1);
+    read(INFILE,my $svol,1);
+    read(INFILE,my $reps,2);
+    read(INFILE,my $repl,2);
+    printf "S%02d: %s\n",$sn,$sname;
+  }
+  read(INFILE,$_,1); $songlen=unpack("C"); print("songlen $songlen\n");
+  read(INFILE,$_,1);
+  read(INFILE,$_,128); @songpats = unpack("C*",substr($_,0,$songlen));
+  read(INFILE,$mk,4); if ($mk!="M.K.") { die("MOD broken! $mk\n"); }
+
+  # my $maxpat=0; for (my $i=0;$i<128;$i++) { my $p=ord(substr($songpats,$i,1)); $maxpat=$p if ($p>$maxpat); }
+
+  printf "Song length: %d, patterns: %s\n",$songlen,join(",",@songpats);
+
+  $it=120; $is=6;
+
+  $patdataoffset = 1084;
+  $patdatalen = 1024;
+
+  $modpatlen=64;
+  $modchannels=4;
+
+  $arow=0;
+
+  $periods = [ 999, 856,808,762,720,678,640,604,570,538,508,480,453, 428,404,381,360,339,320,302,285,269,254,240,226, 214,202,190,180,170,160,151,143,135,127,120,113 ];
+  %periodtonote = map { $periods->[$_] => 48 + $_ } 0..$#{$periods};
+  
+  for (my $pos=0;$pos<$songlen;$pos++) {
+    $pat = $songpats[$pos];
+    seek(INFILE,$patdataoffset + $patdatalen*$pat,0);
+    #print "reading pat ".$pat."\n";
+    for (my $row=0;$row<$modpatlen;$row++) {
+      #printf "%d %d %d = ",$pos,$row,$arow+$row;
+      for (my $chan=0;$chan<$modchannels;$chan++) {
+        read(INFILE,$_,4); my ($b1,$b2,$b3,$b4) = unpack("CCCC");
+        $samplenum = ($b1&0xF0) | ($b3>>4); if (!$samplenum) { next; }
+        $period = (($b1&0x0F)<<8) | $b2;
+        $command = $b4;
+        $pattern[$arow+$row][$chan] = { note=>$periodtonote{$period} || -1, volpan=>63 };
+        #printf "%d=%d ",$period,$periodtonote{$period} || -1
+      }
+      #print "\n";
+    }
+    $arow+=$modpatlen;
+  }
+  close(INFILE);
 }
 
 sub its_S3M() {
@@ -424,14 +474,14 @@ if ($#pattern) {
     print "Tempo mode is 'exact', row playback may be uneven.\n";
   }
 
-  
+  $arows = $#pattern+1;
+
   for (my $outchan=0; $outchan<$NUMCH; $outchan++) {
     $tunedata[$outchan] = [];
     $channel = $CHANNELS[$outchan]-1;
     for ($row=0; $row<$arows; $row++) {
       $note=$pattern[$row][$channel]{note};
       if($note>0 && $note<120) { #exclude cuts and offs
-        if ($DEBUG_NOTES) { print($row.",".$pattern[$row][$channel]{note}.",".$pattern[$row][$channel]{rows}.",".$pattern[$row][$channel]{volpan}."\n"); }
         $notelen=$arows-$row; # assume no end
         $srchrow=$row+1;
         NOTESEARCH: while ($srchrow<$arows) {
@@ -447,6 +497,7 @@ if ($#pattern) {
         if ($outchan==3 && $auto_drum_offs && $notelen>$auto_drum_offs) { $notelen = $auto_drum_offs; }
 
         push @{$tunedata[$outchan]}, { note => $note, vol => $vol,   row => $row, rows => $notelen,    start => $row*$rowdur_ms, length => $notelen*$rowdur_ms };
+        #if (1) { print($row.",".$pattern[$row][$channel]{note}.",".$pattern[$row][$channel]{rows}.",".$pattern[$row][$channel]{volpan}."\n"); }
         #printf ("%.2f %.2f\n",$row*$rowdur_ms,$notelen*$rowdur_ms);
       }
     }
