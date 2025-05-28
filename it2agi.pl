@@ -108,6 +108,7 @@ if($ARGV[0] eq "") {
 while ($v = shift @ARGV) {
   if ($v eq "--debug-it") { $DEBUG_IT=1; }
   elsif ($v eq "--debug-agi") { $DEBUG_AGI=1; }
+  elsif ($v eq "--debug-input") { $DEBUG_INPUT=1; }
   elsif ($v eq "--debug-out") { $DEBUG_OUT=1; }
   elsif ($v eq "--channels") { @CHANNELS = split(",",shift @ARGV); }
   elsif ($v eq "--tempo-exact") { $tempomode_override="exact"; }
@@ -344,10 +345,15 @@ sub read_MID() {
       open(my $bufread,'<',\$chunkbuf);
       $tracks++;
       print("Reading track $tracks, $length bytes\n");
+      
       $totaltime=0;
+      undef @last;
+
       do {{
         $delta = read_vlq($bufread);
-        printf("%5d: ",$delta);
+        $totaltime+=$delta;
+
+        printf "[%5d+%5d]: ",$totaltime,$delta;
         read($bufread,$_,1); $status=unpack("C",$_);
         if ($status&0x80) {
           printf ("Status %08b  ",$status);
@@ -359,9 +365,7 @@ sub read_MID() {
         $chan=($status&0x0F);
         $oldstatus=$status;
 
-        $totaltime+=$delta;
-
-           if ($type==0b1001) { read($bufread,$_,2); ($k,$v)=unpack("CC"); print("$chan N-ON $k=$v "); if (!defined($last[$chan])) { $last[$chan] = { note=>$k, vol=>$v, start=>$totaltime }; print "<<."; } }
+           if ($type==0b1001) { read($bufread,$_,2); ($k,$v)=unpack("CC"); print("$chan N-ON $k=$v "); if (defined($last[$chan]) && $last[$chan]{note}!=$k) { $last[$chan]{length}=$totaltime-$last[$chan]{start}; push @{$mididata[$chan]}; }  $last[$chan] = { note=>$k, vol=>$v>>1, start=>$totaltime }; print "<<.";  }
         elsif ($type==0b1000) { read($bufread,$_,2); ($k,$v)=unpack("CC"); print("$chan N-OF $k=$v "); if ($last[$chan]{note}==$k) { $last[$chan]{length} = $totaltime-$last[$chan]{start}; push @{$mididata[$chan]}, $last[$chan]; print "<<'"; undef $last[$chan]; } }
         elsif ($type==0b1010) { read($bufread,$_,2); ($k,$v)=unpack("CC"); print("$chan AFTT $k=$v "); }
         elsif ($type==0b1011) { read($bufread,$_,2); ($k,$v)=unpack("CC"); print("$chan CTRL $k=$v "); }
@@ -462,20 +466,32 @@ if (@pattern) {
 } else {
   # MIDI!
   for (my $outchan=0; $outchan<$NUMCH; $outchan++) {
-    $tunedata[$outchan] = [];
-    $channel = $CHANNELS[$outchan]-1;
-    $mididata[$channel] = [ sort { $a->{start} <=> $b->{start} } @{$mididata[$channel]} ];
-    $tunedata[$outchan] = $mididata[$channel];
+    $inchan = $CHANNELS[$outchan];
+    printf "MIDI channel %d maps to output %d, %d notes\n",$inchan,$outchan+1,scalar(@{$mididata[$inchan]});
+    $mididata[$inchan] = [ sort { $a->{start} <=> $b->{start} } @{$mididata[$inchan]} ];
+    $tunedata[$outchan] = $mididata[$inchan];
+
+    # PREVENT OVERLAPS
+    for (my $nn=1; $nn<scalar(@{$tunedata[$outchan]}); $nn++) {
+      my $current_note = $tunedata[$outchan][$nn];
+      my $previous_note = $tunedata[$outchan][$nn-1];
+
+      if ($previous_note->{start} + $previous_note->{length} > $current_note->{start}) { $previous_note->{length} = $current_note->{start}-$previous_note->{start}; }
+    }
   }
+
 }
 
-# for ($channel=0; $channel<$NUMCH; $channel++) {
-#   printf "Channel %d:\n",$channel;
-#   for ($nn=0; $nn<scalar(@{$tunedata[$channel]}); $nn++) {
-#     $no=$tunedata[$channel][$nn];
-#     printf "%3d. start %5d, len %5d, note %d\n",$nn,$no->{start},$no->{length},$no->{note};
-#   }
-# }
+if ($DEBUG_INPUT) {
+  print "\n";
+  for (my $outchan=0; $outchan<$NUMCH; $outchan++) {
+    printf "Channel %d:\n",$outchan+1;
+    for ($nn=0; $nn<scalar(@{$tunedata[$outchan]}); $nn++) {
+      $no=$tunedata[$outchan][$nn];
+      printf "%3d. start %5d, len %5d, note %d\n",$nn,$no->{start},$no->{length},$no->{note};
+    }
+  }
+}
 
 #############################################################################################################
 # Here we're expecting to have $tunedata[channel][]{row,note,rows,vol,start,length} to insert rests between notes.
@@ -500,7 +516,7 @@ for ($channel=0; $channel<$NUMCH; $channel++) {
       my $previous_note = $tunedata[$channel][$nn-1];
 
       # PREVENT OVERLAPS
-      #if ($previous_note->{start} + $previous_note->{length} > $current_note->{start}) { $previous_note->{length} = $current_note->{start}-$previous_note->{start}; }
+      if ($previous_note->{start} + $previous_note->{length} > $current_note->{start}) { $previous_note->{length} = $current_note->{start}-$previous_note->{start}; }
 
       if ($current_note->{start} - ($previous_note->{start} + $previous_note->{length}) < 0.001) { # precise enough
         push @{$notedata[$channel]}, $current_note;
@@ -518,7 +534,8 @@ for ($channel=0; $channel<$NUMCH; $channel++) {
 print "Pass 4: Converting to AGI data\n";
 
 for ($voice=0; $voice<$NUMCH; $voice++) {
- if ($DEBUG_AGI) { print("Voice: ".$voice." ================================\n"); }
+  if ($DEBUG_AGI) { print("====================================================\n"); }
+  printf " - Channel %d (%s), %d notes\n",$voice+1,$voice<=2&&"voice"||"noise",scalar(@{$notedata[$voice]});
   $prev_dur_frac=0;
   for ($in=0; $in<scalar(@{$notedata[$voice]}); $in++) {
     $note=$notedata[$voice][$in]{note}; if ($DEBUG_AGI) { printf("n:%3d  ",$note); }
@@ -566,7 +583,6 @@ for ($voice=0; $voice<$NUMCH; $voice++) {
     
     if ($DEBUG_AGI) { printf(" = d %3d f %4d v %3d = %02x %02x %02x %02x %02x\n",$out_duration,$voice<=2 && $freq || $out_noisetype*10+$out_noisefreq,$vol,ord(substr($packet,0,1)),ord(substr($packet,1,1)),$out_fv,$out_fc,$out_att); }
   }
-  print (" - Channel ".($voice+1).", ".scalar(@{$notedata[$voice]})." notes.\n");
 }
 
 print "Writing AGI sound file to $outfile\n";
