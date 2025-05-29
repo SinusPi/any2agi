@@ -109,6 +109,10 @@ Options:
     from within your game, by checking AGI var 22 - but watch out for memory
     limits.
 
+ 5) If you're writing an IT file from scratch, set tempo to 150
+    and speed to 1. This will give you a perfect match for the
+    AGI engine's 60 ticks per second, and 16.67 ms per tick.
+
  Oh, and one more: have fun.
 
 <Nat wrote:>
@@ -148,6 +152,7 @@ Version history:
         --instr-oct to --instr-shift; readme written; tests added
  
 END
+;
   exit(0);
 }
 
@@ -201,6 +206,7 @@ Output file is created in the same directory as the input file, with the .AGS ex
 You can also specify a different output file name.
 
 USAGE
+;
   die(1);
 }
 
