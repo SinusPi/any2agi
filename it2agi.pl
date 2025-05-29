@@ -150,6 +150,7 @@ Version history:
         --instr-drum implemented
  0.2.7: --instr-drum changed to --instr-note, and
         --instr-oct to --instr-shift; readme written; tests added
+ 0.3.0: proper MIDI support, with tempo changes cutting overlapped notes
  
 END
 ;
@@ -207,21 +208,23 @@ You can also specify a different output file name.
 
 USAGE
 ;
-  die(1);
+  exit(1);
 }
 
-@CHANNELS=(1,2,3,4);
-$AGI_TICK = 16.66667;
+@CHANNELS=(1,2,3,4); $CHANNELS_DEFAULT=1;
+$AGI_TICK = 16.66667; # ms
+$POLYMODE = 0;
 
 while ($v = shift @ARGV) {
      if ($v eq "--debug-input") { $DEBUG_INPUT=1; }
   elsif ($v eq "--debug-proc") { $DEBUG_PROC=1; }
   elsif ($v eq "--debug-agi") { $DEBUG_AGI=1; }
-  elsif ($v eq "--channels") { @CHANNELS = split(",",shift @ARGV); }
+  elsif ($v eq "--channels") { @CHANNELS = split(",",shift @ARGV); $CHANNELS_DEFAULT=0; }
   elsif ($v eq "--tempo-exact") { $tempomode_override="exact"; }
   elsif ($v eq "--auto-drum-offs") { $auto_drum_offs = shift @ARGV; }
   elsif ($v eq "--instr-note") { $instr = shift @ARGV; $note = shift @ARGV; $INSTRNOTE[$instr]=$note; }
   elsif ($v eq "--instr-shift") { $instr = shift @ARGV; $shift = shift @ARGV; $INSTRSHIFT[$instr]=$shift; }
+  elsif ($v eq "--midipoly") { $POLYMODE = 1; }
   else {
     if (!$infile) { $infile = $v; } else { $outfile = $v; }
   }
@@ -238,6 +241,12 @@ open(INFILE, "<".$infile);
 binmode(INFILE);
 
 # READING
+
+sub print_di {
+  if ($DEBUG_INPUT) {
+    printf @_;
+  }
+}
 
 if (its_SND()) {
   die("$infile : The input file seems to be in AGI SOUND format already.\n");
@@ -324,33 +333,33 @@ sub read_IT() {
       if ($cvar==0) {       # end of row
         $row++;
         $arow++;
-        if ($DEBUG_INPUT) { print(sprintf("0x%X", tell(INFILE)-1)." = next row: $row\n"); }
+        print_di(sprintf("0x%X", tell(INFILE)-1)." = next row: $row\n");
         next READER;
       }
       $channel = ($cvar - 1) & 63;
-        if ($DEBUG_INPUT) { print("chan $channel\n"); }
+        print_di("chan $channel\n");
       $pmvar = $chanmask[$channel];
       if ($cvar & 128) {
         read(INFILE,$buf,1);
         $mvar = unpack("C",$buf);
-        if ($DEBUG_INPUT) { print(sprintf("0x%X", tell(INFILE)-1)." = mvar $mvar\n"); }
+        print_di(sprintf("0x%X", tell(INFILE)-1)." = mvar $mvar\n");
       }
       else {
         $mvar = $pmvar;
-        if ($DEBUG_INPUT) { print("pmvar $mvar\n"); }
+        print_di("pmvar $mvar\n");
       }
       $chanmask[$channel]=$mvar;
 
       if ($mvar & 16) {
         $pattern[$arow][$channel]{note} = $lastval[$channel]{note};
-        # if ($DEBUG_INPUT) { print($arow.": WTF? ch".$channel." n prev\n"); }
+        # print_di($arow.": WTF? ch".$channel." n prev\n");
       }
       if ($mvar & 32) {
         $pattern[$arow][$channel]{instrument} = $lastval[$channel]{instrument};
       }
       if ($mvar & 64) {
         $pattern[$arow][$channel]{volpan} = $lastval[$channel]{volpan};
-        if ($DEBUG_INPUT) { print(sprintf("0x%X", tell(INFILE)-1)." = ".$arow.": ch".$channel." REv ".$lastval[$channel]{volpan}."\n"); }
+        print_di(sprintf("0x%X", tell(INFILE)-1)." = ".$arow.": ch".$channel." REv ".$lastval[$channel]{volpan}."\n");
       }
       if ($mvar & 128) {
         $pattern[$arow][$channel]{command} = $lastval[$channel]{command};
@@ -360,17 +369,17 @@ sub read_IT() {
       if ($mvar & 1) {
         read(INFILE,$buf,1);
         $lastval[$channel]{note} = $pattern[$arow][$channel]{note} = unpack("C",$buf);
-        if ($DEBUG_INPUT) { print(sprintf("0x%X", tell(INFILE)-1)." = ".$arow.": ch".$channel." n ".unpack("C",$buf)."\n"); }
+        print_di(sprintf("0x%X", tell(INFILE)-1)." = ".$arow.": ch".$channel." n ".unpack("C",$buf)."\n");
       }
       if ($mvar & 2) {
         read(INFILE,$buf,1);
         $lastval[$channel]{instrument} = $pattern[$arow][$channel]{instrument} = unpack("C",$buf);
-        if ($DEBUG_INPUT) { print(sprintf("0x%X", tell(INFILE)-1)." = ".$arow.": ch".$channel." i ".unpack("C",$buf)."\n"); }
+        print_di(sprintf("0x%X", tell(INFILE)-1)." = ".$arow.": ch".$channel." i ".unpack("C",$buf)."\n");
       }
       if ($mvar & 4) {
         read(INFILE,$buf,1);
         $lastval[$channel]{volpan} = $pattern[$arow][$channel]{volpan} = unpack("C",$buf);
-        if ($DEBUG_INPUT) { print(sprintf("0x%X", tell(INFILE)-1)." = ".$arow.": ch".$channel." v ".unpack("C",$buf)."\n"); }
+        print_di(sprintf("0x%X", tell(INFILE)-1)." = ".$arow.": ch".$channel." v ".unpack("C",$buf)."\n");
       }
       if ($mvar & 8) {
         read(INFILE,$buf,2);
@@ -378,7 +387,7 @@ sub read_IT() {
         $pattern[$arow][$channel]{param}) = unpack("CC",$buf);
         $lastval[$channel]{command}=$pattern[$arow][$channel]{command};
         $lastval[$channel]{param}=$pattern[$arow][$channel]{param};
-        if ($DEBUG_INPUT) { print(sprintf("0x%X", tell(INFILE)-1)." = ".$arow.": ch".$channel." cp ".unpack("CC",$buf)."\n"); }
+        print_di(sprintf("0x%X", tell(INFILE)-1)." = ".$arow.": ch".$channel." cp ".unpack("CC",$buf)."\n");
       }
     }
   }
@@ -402,7 +411,7 @@ sub read_MOD() {
     read(INFILE,my $svol,1);
     read(INFILE,my $reps,2);
     read(INFILE,my $repl,2);
-    if ($DEBUG_INPUT) { printf "S%02d: %s\n",$sn,$sname; }
+    print_di "S%02d: %s\n",$sn,$sname;
   }
   read(INFILE,$_,1); $songlen=unpack("C");
   read(INFILE,$_,1);
@@ -411,7 +420,7 @@ sub read_MOD() {
 
   # my $maxpat=0; for (my $i=0;$i<128;$i++) { my $p=ord(substr($songpats,$i,1)); $maxpat=$p if ($p>$maxpat); }
 
-  if ($DEBUG_INPUT) { printf "Song length: %d, patterns: %s\n",$songlen,join(",",@songpats); }
+  print_di "Song length: %d, patterns: %s\n",$songlen,join(",",@songpats);
 
   $it=120; $is=6;
 
@@ -429,9 +438,9 @@ sub read_MOD() {
   for (my $pos=0;$pos<$songlen;$pos++) {
     $pat = $songpats[$pos];
     seek(INFILE,$patdataoffset + $patdatalen*$pat,0);
-    if ($DEBUG_INPUT) { print "reading pat ".$pat."\n"; }
+    print_di "reading pat ".$pat."\n";
     for (my $row=0;$row<$modpatlen;$row++) {
-      if ($DEBUG_INPUT) { printf "%02d = ",$row; }
+      print_di "%02d = ",$row;
       for (my $chan=0;$chan<$modchannels;$chan++) {
         read(INFILE,$_,4); my ($b1,$b2,$b3,$b4) = unpack("CCCC");
         $samplenum = ($b1&0xF0) | ($b3>>4);
@@ -439,7 +448,7 @@ sub read_MOD() {
         $command = $b3&0x0F;
         $args = $b4;
         if (!$samplenum && !$period && !$command) {
-          if ($DEBUG_INPUT) { printf "        "; }
+          print_di "        ";
           next;
         }
         $note = $periodtonote{$period} || -1;
@@ -449,9 +458,9 @@ sub read_MOD() {
         if ($command==0x0C) { $notedata->{volpan}=$args; }
         $pattern[$arow+$row][$chan] = $notedata;
         
-        if ($DEBUG_INPUT) { printf "%02d %1X%02x  ",$periodtonote{$period},$command,$args }
+        print_di "%02d %1X%02x  ",$periodtonote{$period},$command,$args
       }
-      if ($DEBUG_INPUT) { print "\n"; }
+      print_di "\n";
     }
     $arow+=$modpatlen;
   }
@@ -494,74 +503,145 @@ sub its_MID() {
 sub read_MID() {
   seek(INFILE,0,0);
   $chunks=0;
+
+  if ($CHANNELS_DEFAULT) { @CHANNELS=(0,1,2,9); } # default channels
+
+  my $miditempo = 500000; # default tempo
+  my $miditicksbeat = 192; # default ticks per beat
+  
+  my $MIDICH_DRUM = 9; # default drum channel
+
   do {
     read(INFILE,my $chunktype,4);
     read(INFILE,$_,4); $length = unpack("L>");
     read(INFILE,my $chunkbuf,$length);
 
-    $midinotes=[];
-
     my @readchans;
     for (my $ch=0;$ch<$NUMCH;$ch++) { $readchans[$CHANNELS[$ch]]=1; }
 
     if ($chunktype eq "MThd") {
+    
       ## read header
-      my ($format,$ntrks,$div) = unpack("S>[3]",$buf);
+      my ($format,$ntrks,$div) = unpack("S>[3]",$chunkbuf);
       my $divtype = $div & 0x8000;
-      if ($divtype==0) { $ticksperq = $div & 0x7FFF; }
+      if ($divtype==0) { $miditicksbeat = $div & 0x7FFF; }
       else { ($negsmpte,$ticksperf)=(($div & 0x7F00)>>8,($div & 0x00FF)); }
-      if ($DEBUG_INPUT) { print("Header: format $format, $ntrks tracks, ticksperq=$ticksperq, negsmpte=$negsmpte, ticksperf=$ticksperf\n"); }
+      print_di "Header: format $format, $ntrks tracks, ticks/beat=$miditicksbeat, negsmpte=$negsmpte, ticksperf=$ticksperf\n";
+
     } elsif ($chunktype eq "MTrk") {
+    
       open(my $bufread,'<',\$chunkbuf);
       $tracks++;
-      if ($DEBUG_INPUT) { print("Reading track $tracks, $length bytes\n"); }
+      print_di "Reading track $tracks, $length bytes\n";
+
+      ############
+      if ($tracks>=3) {
+        # seek to end of $bufread, so nothing is read
+        seek($bufread,0,2);
+      }
       
-      $totaltime=0;
+      my $totalticks=0;
+      my $totalsec=0;
+      my $totalms=0;
       undef @last;
+
+      $polychans = 0; # currently playing
 
       do {{
         $delta = read_vlq($bufread);
-        $totaltime+=$delta;
+        $totalticks+=$delta;
 
-        printf "[%5d+%5d]: ",$totaltime,$delta;
+        $deltams = $delta / $miditicksbeat * $miditempo / 1000; # timestamp in ms
+        $totalms += $deltams;
+
+
+        print_di "[+%5d=%5d=%7.3fs]: ",$delta,$totalticks,$totalms;
+
         read($bufread,$_,1); $status=unpack("C",$_);
         if ($status&0x80) {
-          printf ("Status %08b  ",$status);
+          print_di "Status %08b  ",$status;
         } else {
           $status=$oldstatus; seek($bufread,-1,1); # keep old status, go back a byte
-          printf ("   ... %08b  ",$status);
+          print_di "   ... %08b  ",$status;
         }
         $type=($status&0xF0)>>4;
         $chan=($status&0x0F);
         $oldstatus=$status;
 
-           if ($type==0b1001) { read($bufread,$_,2); ($k,$v)=unpack("CC"); print("$chan N-ON $k=$v "); if (defined($last[$chan]) && $last[$chan]{note}!=$k) { $last[$chan]{length}=$totaltime-$last[$chan]{start}; push @{$mididata[$chan]}; }  $last[$chan] = { note=>$k, vol=>$v>>1, start=>$totaltime }; if ($DEBUG_INPUT) { print "<<."; } }
-        elsif ($type==0b1000) { read($bufread,$_,2); ($k,$v)=unpack("CC"); print("$chan N-OF $k=$v "); if ($last[$chan]{note}==$k) { $last[$chan]{length} = $totaltime-$last[$chan]{start}; push @{$mididata[$chan]}, $last[$chan]; undef $last[$chan]; } if ($DEBUG_INPUT) { print "<<'"; } }
-        elsif ($type==0b1010) { read($bufread,$_,2); ($k,$v)=unpack("CC"); print("$chan AFTT $k=$v "); }
-        elsif ($type==0b1011) { read($bufread,$_,2); ($k,$v)=unpack("CC"); print("$chan CTRL $k=$v "); }
-        elsif ($type==0b1100) { read($bufread,$_,1); $pc=unpack("C"); print("$chan PCHG $pc "); }
-        elsif ($type==0b1101) { read($bufread,$_,1); $v=ord($_); print("$chan AFTC $k=$v "); }
-        elsif ($type==0b1110) { read($bufread,$_,2); $v=ord($_); print("$chan PWHL $k=$v "); }
-        elsif ($status==0b11110000) { print "SSX0 "; $len=read_vlq(); read($bufread,$buf,$len); printf("[%s]",$buf); } # do { read($bufread,$buf,1); } until (ord($buf)==0b11110111); }
-        elsif ($status==0b11110111) { print "SSX1 "; $len=read_vlq(); read($bufread,$buf,$len); } # do { read($bufread,$buf,1); } until (ord($buf)==0b11110111); }
+        if ($type==0b1001) { read($bufread,$_,2); ($k,$v)=unpack("CC"); print_di "$chan N-ON $k=$v ";
+          #if ($chan>5) { next; }
+          if ($POLYMODE && $chan!=$MIDICH_DRUM) { # polyphonic mode
+            if ($polychans<3) { # there's still space?
+              $midipoly[$polychans] = { chan=>$chan, poly=>$polychans, note=>$k, vol=>$v>>1, start=>$totalms }; # start note
+              $polychans++;
+              print_di "<<. *".$polychans;
+            }
+          } else { # monophonic mode
+            print_di "<<. ";
+            if (defined($last[$chan]) && $last[$chan]{note}!=$k) { # different note, abort previous note
+              print_di "!";
+              $last[$chan]{length} = $totalms-$last[$chan]{start}-0.01;
+              push @{$mididata[$chan]}, $last[$chan];
+              undef $last[$chan];
+            }
+            $last[$chan] = { note=>$k, vol=>$v>>1, start=>$totalms }; # start note
+          }
+        }
+        elsif ($type==0b1000) { read($bufread,$_,2); ($k,$v)=unpack("CC"); print_di "$chan N-OF $k=$v ";
+          #if ($chan>5) { next; }
+          if ($POLYMODE && $chan!=$MIDICH_DRUM) { # polyphonic mode
+            for (my $poly=0;$poly<$polychans;$poly++) { # find the note already playing
+              $pnote = $midipoly[$poly];
+              if ($pnote->{chan}==$chan && $pnote->{note}==$k) {
+                $pnote->{length} = $totalms-$pnote->{start}-0.01; # end note
+                if ($poly<3) { push @{$mididata[$pnote->{poly}]}, $pnote; } # low 3 midipolys actually play
+                splice(@midipoly,$poly,1);
+                #if ($midipoly[2]) { # just pulled from back buffer
+                #  $midipoly[$poly]{start} = $totalms; # end note
+                #}
+                print_di "<<' *".$polychans;
+                $polychans--;
+                last;
+              }
+              # start playing the next note if there are still some left
+            }
+          } else { # monophonic mode
+            if ($last[$chan]{note}==$k) {
+              $last[$chan]{length} = $totalms-$last[$chan]{start}-0.01;
+              push @{$mididata[$chan]}, $last[$chan];
+              undef $last[$chan];
+              print_di "<<'";
+            }
+          }
+        }
+        elsif ($type==0b1010) { read($bufread,$_,2); ($k,$v)=unpack("CC"); print_di "$chan AFTT $k=$v "; }
+        elsif ($type==0b1011) { read($bufread,$_,2); ($k,$v)=unpack("CC"); print_di "$chan CTRL $k=$v "; }
+        elsif ($type==0b1100) { read($bufread,$_,1); $pc=unpack("C"); print_di "$chan PCHG $pc "; }
+        elsif ($type==0b1101) { read($bufread,$_,1); $v=ord($_); print_di "$chan AFTC $k=$v "; }
+        elsif ($type==0b1110) { read($bufread,$_,2); $v=ord($_); print_di "$chan PWHL $k=$v "; }
+        elsif ($status==0b11110000) { print_di "SSX0 "; $len=read_vlq(); read($bufread,$buf,$len); print_di "[%s]",$buf; } # do { read($bufread,$buf,1); } until (ord($buf)==0b11110111); }
+        elsif ($status==0b11110111) { print_di "SSX1 "; $len=read_vlq(); read($bufread,$buf,$len); } # do { read($bufread,$buf,1); } until (ord($buf)==0b11110111); }
         elsif ($status==0b11110010) { read($bufread,$buf,2); }
         elsif ($status==0b11110011) { read($bufread,$buf,1); }
         elsif ($status==0b11111111) { # meta 
-          read($bufread,$_,1); $meta=unpack("C",$_);
-          printf("META%02x ",$meta);
-             if ($meta==0x00) { read($bufread,$buf,1); printf("%02x SEQN",ord($buf)); }
-          elsif ($meta<=0x07) { $len=read_vlq($bufread); read($bufread,$buf,$len); printf("[%s]",$buf); }
-          elsif ($meta==0x20) { read($bufread,$buf,2); }
-          elsif ($meta==0x21) { read($bufread,$buf,2); }
-          elsif ($meta==0x2F) { read($bufread,$_,1); $v=unpack("C"); printf("%02x",$v); }
-          elsif ($meta==0x51) { read($bufread,$_,4); ($v,$t1,$t2,$t3)=unpack("C4"); $t=($t1<<16)+($t2<<8)+$t3; printf("%02x TMPO %d",$v,$t); }
-          elsif ($meta==0x54) { read($bufread,$buf,6); }
-          elsif ($meta==0x58) { read($bufread,$buf,5); }
-          elsif ($meta==0x59) { read($bufread,$_,3); ($v,$sf,$mi)=unpack("CcC"); printf("%02x SIGN %d %s",$v,$sf,($mi?"min":"maj")); }
-          elsif ($meta==0x7f) { $len=read_vlq($bufread); read($bufread,$buf,$len); printf("[%s]",$buf); }
+          read($bufread,$_,1); $meta=unpack("C");
+          $len=read_vlq($bufread);
+          print_di "META%02x[%d] ",$meta,$len;
+          read($bufread,$metadata,$len);
+          my $a=ord($metadata[0]);
+             if ($meta==0x00) { print_di "SEQN %d",$a; }
+          elsif ($meta<=0x07) { print_di "[%s]",$metadata; }
+          elsif ($meta==0x20) { print_di "CHAN %d",$a; }
+          elsif ($meta==0x21) { }
+          elsif ($meta==0x2F) { print_di "EOTR"; }
+          elsif ($meta==0x51) { ($t1,$t2,$t3)=unpack("C3",$metadata); $t=($t1<<16)+($t2<<8)+$t3; $miditempo=$t; print_di("TMPO %d = %d bpm",$t,60000000/$t); }
+          elsif ($meta==0x54) { (my $s,$m,$p,$t,$e)=unpack("C5",$metadata); print_di("SMPT %d:%d:%d:%d:%d",$s,$m,$p,$t,$e); }
+          elsif ($meta==0x58) { (my $n,$d,$clk,$b32)=unpack("C4",$metadata); $d=2**$d; print_di("TSIG %d/%d %dclk %d*32/beat",$n,$d,$clk,$b32); }
+          elsif ($meta==0x59) { ($sf,$mi)=unpack("cC"); print_di("KSIG %d %s",$sf,($mi?"min":"maj")); }
+          elsif ($meta==0x7f) { print_di "[%s]",$buf; }
         }
-        else { printf ("Unknown status %08b\n",$status); }
-        print("\n");
+        else { print_di "Unknown status %08b\n",$status; }
+        print_di "\n";
         # $i++; if ($i==100) { die(); }
       }} until (eof($bufread));
     }
@@ -642,6 +722,18 @@ if (@pattern) {
     }
   }
 } else {
+
+  if ($DEBUG_PROC) {
+    print "\n MIDI:\n";
+    for (my $midichan=0; $midichan<32; $midichan++) {
+      printf "Channel %d:\n",$midichan;
+      for (my $nn=0; $nn<scalar(@{$mididata[$midichan]}); $nn++) {
+        my $no=$mididata[$midichan][$nn];
+        printf "%3d. start %6.2f, len %6.2f, note %d\n",$nn,$no->{start},$no->{length},$no->{note};
+      }
+    }
+  }
+
   # MIDI!
   for (my $outchan=0; $outchan<$NUMCH; $outchan++) {
     $inchan = $CHANNELS[$outchan];
@@ -654,7 +746,7 @@ if (@pattern) {
       my $current_note = $tunedata[$outchan][$nn];
       my $previous_note = $tunedata[$outchan][$nn-1];
 
-      if ($previous_note->{start} + $previous_note->{length} > $current_note->{start}) { $previous_note->{length} = $current_note->{start}-$previous_note->{start}; }
+      if ($previous_note->{start} + $previous_note->{length} > $current_note->{start}) { $previous_note->{length} = $current_note->{start}-$previous_note->{start}-0.01; }
     }
   }
 
@@ -666,7 +758,7 @@ if ($DEBUG_PROC) {
     printf "Channel %d:\n",$outchan+1;
     for ($nn=0; $nn<scalar(@{$tunedata[$outchan]}); $nn++) {
       $no=$tunedata[$outchan][$nn];
-      printf "%3d. start %5d, len %5d, note %d\n",$nn,$no->{start},$no->{length},$no->{note};
+      printf "%3d. start %6.2f, len %6.2f, note %d\n",$nn,$no->{start},$no->{length},$no->{note};
     }
   }
 }
@@ -694,9 +786,9 @@ for ($channel=0; $channel<$NUMCH; $channel++) {
       my $previous_note = $tunedata[$channel][$nn-1];
 
       # PREVENT OVERLAPS
-      if ($previous_note->{start} + $previous_note->{length} > $current_note->{start}) { $previous_note->{length} = $current_note->{start}-$previous_note->{start}; }
+      #if ($previous_note->{start} + $previous_note->{length} > $current_note->{start}) { $previous_note->{length} = $current_note->{start}-$previous_note->{start}-0.01; }
 
-      if ($current_note->{start} - ($previous_note->{start} + $previous_note->{length}) < 0.001) { # precise enough
+      if ($current_note->{start} - ($previous_note->{start} + $previous_note->{length}) < $AGI_TICK/2) { # precise enough
         push @{$notedata[$channel]}, $current_note;
       } else {
         push @{$notedata[$channel]}, { note => -1, length => $current_note->{start} - ($previous_note->{start} + $previous_note->{length}) };
