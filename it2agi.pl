@@ -214,6 +214,17 @@ USAGE
 @CHANNELS=(1,2,3,4); $CHANNELS_DEFAULT=1;
 $AGI_TICK = 16.66667; # ms
 $POLYMODE = 0;
+$DRUMNOTES = {
+  35 => { note => 16, length => 100  }, # bass drum
+  36 => { note => 16, length => 100 },  # bass drum 1
+  37 => { note => 14, length => 50 },   # side stick
+  38 => { note => 15, length => 100 },  # snare
+  39 => { note => 15, length => 150 },  # clap
+  40 => { note => 15, length => 100 },  # elec snare
+  41 => { note => 14, length => 100 },  # low tom
+  42 => { note => 14, length => 50 },  # hihat closed
+  999 => { note => 16, length => 50 },  # hihat closed
+};
 
 while ($v = shift @ARGV) {
      if ($v eq "--debug-input") { $DEBUG_INPUT=1; }
@@ -225,6 +236,7 @@ while ($v = shift @ARGV) {
   elsif ($v eq "--instr-note") { $instr = shift @ARGV; $note = shift @ARGV; $INSTRNOTE[$instr]=$note; }
   elsif ($v eq "--instr-shift") { $instr = shift @ARGV; $shift = shift @ARGV; $INSTRSHIFT[$instr]=$shift; }
   elsif ($v eq "--midipoly") { $POLYMODE = 1; }
+  elsif ($v eq "--nomidiremap") { $NOMIDIREMAP = 1; }
   else {
     if (!$infile) { $infile = $v; } else { $outfile = $v; }
   }
@@ -277,6 +289,7 @@ sub its_IT() {
   return ($buf eq "IMPM");
 }
 sub read_IT() {
+  $FORMAT="IT";
   seek(INFILE,4,0);
   read(INFILE,$songname,26);
   print "Reading module '$songname' from $infile\n";
@@ -400,6 +413,7 @@ sub its_MOD() {
   return ($buf eq "M.K.");
 }
 sub read_MOD() {
+  $FORMAT="MOD";
   seek(INFILE,0,0);
   read(INFILE,my $title,20);
   print("Reading Protracker module '$title'...\n");
@@ -473,6 +487,7 @@ sub its_S3M() {
   return ($buf eq "SCRM");
 }
 sub read_S3M() {
+  $FORMAT="S3M";
   seek(INFILE,0,0);
   read(INFILE,my $title,0x14);
   print("Reading ScreamTracker3 module '$title'...\n");
@@ -487,6 +502,7 @@ sub its_XM() {
   return ($buf eq "FastTracker");
 }
 sub read_XM() {
+  $FORMAT="XM";
   seek(INFILE,0x11,0);
   read(INFILE,my $title,0x14);
   print("Reading FastTracker module '$title'...\n");
@@ -501,6 +517,7 @@ sub its_MID() {
   return ($buf eq "MThd");
 }
 sub read_MID() {
+  $FORMAT="MIDI";
   seek(INFILE,0,0);
   $chunks=0;
 
@@ -534,12 +551,6 @@ sub read_MID() {
       $tracks++;
       print_di "Reading track $tracks, $length bytes\n";
 
-      ############
-      if ($tracks>=3) {
-        # seek to end of $bufread, so nothing is read
-        seek($bufread,0,2);
-      }
-      
       my $totalticks=0;
       my $totalsec=0;
       my $totalms=0;
@@ -568,7 +579,15 @@ sub read_MID() {
         $chan=($status&0x0F);
         $oldstatus=$status;
 
-        if ($type==0b1001) { read($bufread,$_,2); ($k,$v)=unpack("CC"); print_di "$chan N-ON $k=$v ";
+        # ugly hack for note-on 0-velocity being used as note-off
+        if ($type==0b1001) {
+          read($bufread,$_,2); ($k,$v)=unpack("CC");
+          if ($v==0) { $type=0b1000; } # note-off
+          seek($bufread,-2,1); # go back
+        }
+
+        if ($type==0b1001) {
+          read($bufread,$_,2); ($k,$v)=unpack("CC"); print_di "$chan N-ON $k=$v ";
           #if ($chan>5) { next; }
           if ($POLYMODE && $chan!=$MIDICH_DRUM) { # polyphonic mode
             if ($polychans<3) { # there's still space?
@@ -578,22 +597,27 @@ sub read_MID() {
             }
           } else { # monophonic mode
             print_di "<<. ";
-            if (defined($last[$chan]) && $last[$chan]{note}!=$k) { # different note, abort previous note
-              print_di "!";
-              $last[$chan]{length} = $totalms-$last[$chan]{start}-0.01;
-              push @{$mididata[$chan]}, $last[$chan];
-              undef $last[$chan];
+            if ($last[$chan]{note} && $last[$chan]{note}!=$k) { # different note, abort previous note
+              print_di "!".$last[$chan]{note};
+              $last[$chan]{length} = $totalms-$last[$chan]{start};
+              if ($last[$chan]{length}>0) { # only if it's not zero-length, otherwise just drop it
+                push @{$mididata[$chan]}, $last[$chan];
+              } else {
+                print_di "-";
+              }
             }
+            
             $last[$chan] = { note=>$k, vol=>$v>>1, start=>$totalms }; # start note
           }
         }
-        elsif ($type==0b1000) { read($bufread,$_,2); ($k,$v)=unpack("CC"); print_di "$chan N-OF $k=$v ";
+        elsif ($type==0b1000) {
+          read($bufread,$_,2); ($k,$v)=unpack("CC"); print_di "$chan N-OF $k=$v ";
           #if ($chan>5) { next; }
           if ($POLYMODE && $chan!=$MIDICH_DRUM) { # polyphonic mode
             for (my $poly=0;$poly<$polychans;$poly++) { # find the note already playing
               $pnote = $midipoly[$poly];
               if ($pnote->{chan}==$chan && $pnote->{note}==$k) {
-                $pnote->{length} = $totalms-$pnote->{start}-0.01; # end note
+                $pnote->{length} = $totalms-$pnote->{start}; # end note
                 if ($poly<3) { push @{$mididata[$pnote->{poly}]}, $pnote; } # low 3 midipolys actually play
                 splice(@midipoly,$poly,1);
                 #if ($midipoly[2]) { # just pulled from back buffer
@@ -607,7 +631,9 @@ sub read_MID() {
             }
           } else { # monophonic mode
             if ($last[$chan]{note}==$k) {
-              $last[$chan]{length} = $totalms-$last[$chan]{start}-0.01;
+              if ($chan!=9 || !$last[$chan]{length}) { # keep the note length for drums
+                $last[$chan]{length} = $totalms-$last[$chan]{start};
+              }
               push @{$mididata[$chan]}, $last[$chan];
               undef $last[$chan];
               print_di "<<'";
@@ -726,7 +752,7 @@ if (@pattern) {
   if ($DEBUG_PROC) {
     print "\n MIDI:\n";
     for (my $midichan=0; $midichan<32; $midichan++) {
-      printf "Channel %d:\n",$midichan;
+      printf "MIDI Channel %d:\n",$midichan;
       for (my $nn=0; $nn<scalar(@{$mididata[$midichan]}); $nn++) {
         my $no=$mididata[$midichan][$nn];
         printf "%3d. start %6.2f, len %6.2f, note %d\n",$nn,$no->{start},$no->{length},$no->{note};
@@ -746,7 +772,7 @@ if (@pattern) {
       my $current_note = $tunedata[$outchan][$nn];
       my $previous_note = $tunedata[$outchan][$nn-1];
 
-      if ($previous_note->{start} + $previous_note->{length} > $current_note->{start}) { $previous_note->{length} = $current_note->{start}-$previous_note->{start}-0.01; }
+      if ($previous_note->{start} + $previous_note->{length} > $current_note->{start}) { $previous_note->{length} = $current_note->{start}-$previous_note->{start}; }
     }
   }
 
@@ -786,7 +812,7 @@ for ($channel=0; $channel<$NUMCH; $channel++) {
       my $previous_note = $tunedata[$channel][$nn-1];
 
       # PREVENT OVERLAPS
-      #if ($previous_note->{start} + $previous_note->{length} > $current_note->{start}) { $previous_note->{length} = $current_note->{start}-$previous_note->{start}-0.01; }
+      #if ($previous_note->{start} + $previous_note->{length} > $current_note->{start}) { $previous_note->{length} = $current_note->{start}-$previous_note->{start}; }
 
       if ($current_note->{start} - ($previous_note->{start} + $previous_note->{length}) < $AGI_TICK/2) { # precise enough
         push @{$notedata[$channel]}, $current_note;
@@ -812,6 +838,8 @@ for ($voice=0; $voice<$NUMCH; $voice++) {
     $length=$notedata[$voice][$in]{length}; if ($DEBUG_AGI) { printf("l:%7.1f  ",$length); } # length as time in ms
     $vol=$notedata[$voice][$in]{vol}; if (!defined($vol) || $vol>63) { $vol=63; }
 
+    #if ($length==0) { next; } # skip zero-length notes
+
     # prepare duration
 
     $duration_f = $length / $AGI_TICK;
@@ -833,7 +861,15 @@ for ($voice=0; $voice<$NUMCH; $voice++) {
       
       $out_fv = $out_freqdiv >> 4;
       $out_fc = 128 + ($vreg<<4) + ($out_freqdiv%16);
+    
     } else { # noise channel
+    
+      # override drums
+      if ($voice==3 && $FORMAT eq "MIDI" && !$NOMIDIREMAP) {
+        if ($DRUMNOTES[$note]) { $note = $DRUMNOTES[$note]{note}; }
+        else { $note = $DRUMNOTES[999]{note}; }
+      }
+
       $out_noisetype = int($note/12)%2;
       $out_noisefreq = $note%4;
       if ($note==-1) { $out_noisetype=$out_noisefreq=0; }
