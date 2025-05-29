@@ -1,8 +1,6 @@
-##############################################################
 #         Impulse Tracker -> AGI Sound Converter             #
-#    (c) 1999-2000 Nat Budin - portions by Lance Ewing       #
-#        v0.2.7 enhanced by Adam 'Sinus' Skawinski           #
-##############################################################
+##    (c) 1999-2000 Nat Budin - portions by Lance Ewing       #
+##       v0.4.0 enhanced by Adam 'Sinus' Skawinski           #
 
  To use this program, just type "perl it2agi xxxxxxx.it" where
  xxxxxxx.it is the name of the Impulse Tracker 2.14 file you
@@ -60,9 +58,7 @@ Options:
   pitch, and notes in the input were written to match that. Or,
   use +12 or -12 to transpose by an octave.
 
-##############################################################
-    Notes on making IT2AGI-compliant Impulse Tracker files   #
-##############################################################
+##    Notes on making IT2AGI-compliant Impulse Tracker files
 
  Things to remember:
 
@@ -99,7 +95,7 @@ Options:
 
  Oh, and one more: have fun.
 
-<Nat wrote:>
+_Nat wrote:_
 
  Many thanks go to Lance Ewing.  Not only did he write the
  AGI Sound specification, enabling my to write this program,
@@ -116,7 +112,7 @@ Options:
  get my undying gratitude and proper credit in the next
  version.
 
-<sinus@sinpi.net takes over>
+_sinus@sinpi.net takes over_
 
  Bugs were fixed, new features and input formats were added!
  You can now find this program on GitHub at:
