@@ -132,7 +132,7 @@ Options:
  get my undying gratitude and proper credit in the next
  version.
 
-<Sinus takes over>
+<sinus@sinpi.net takes over>
 
  Bugs were fixed, new features and input formats were added!
  You can now find this program on GitHub at:
@@ -151,6 +151,7 @@ Version history:
  0.2.7: --instr-drum changed to --instr-note, and
         --instr-oct to --instr-shift; readme written; tests added
  0.3.0: proper MIDI support, with tempo changes cutting overlapped notes
+ 0.4.0: MIDI support has drummaps now
  
 END
 ;
@@ -160,7 +161,7 @@ END
 
 if ($ARGV[0] eq "" || $ARGV[0] eq "-h" || $ARGV[0] eq "--help") {
   print <<"USAGE";
-IT2AGI version 0.2.7
+IT2AGI version 0.4.0
 (c) 1999-2000 Nat Budin - portions by Lance Ewing
 Fixes 2025 by Adam 'Sinus' Skawinski
 
@@ -328,6 +329,8 @@ sub read_IT() {
   $arow=0;
   $arows=0;
 
+  $IT_CMD_J_ARP = 10;
+
   for ($order=0; $order<($ordnum-1); $order++) {
     my $offset = $patoff[$orders[$order]];
     next if (!$offset);
@@ -346,7 +349,7 @@ sub read_IT() {
       if ($cvar==0) {       # end of row
         $row++;
         $arow++;
-        print_di(sprintf("0x%X", tell(INFILE)-1)." = next row: $row\n");
+        print_di "0x%X = next row: %d\n", tell(INFILE)-1,$row;
         next READER;
       }
       $channel = ($cvar - 1) & 63;
@@ -355,7 +358,7 @@ sub read_IT() {
       if ($cvar & 128) {
         read(INFILE,$buf,1);
         $mvar = unpack("C",$buf);
-        print_di(sprintf("0x%X", tell(INFILE)-1)." = mvar $mvar\n");
+        print_di "0x%X = mvar %d\n", tell(INFILE)-1,$mvar;
       }
       else {
         $mvar = $pmvar;
@@ -372,7 +375,7 @@ sub read_IT() {
       }
       if ($mvar & 64) {
         $pattern[$arow][$channel]{volpan} = $lastval[$channel]{volpan};
-        print_di(sprintf("0x%X", tell(INFILE)-1)." = ".$arow.": ch".$channel." REv ".$lastval[$channel]{volpan}."\n");
+        #print_di(sprintf("0x%X", tell(INFILE)-1)." = ".$arow.": ch".$channel." REv ".$lastval[$channel]{volpan}."\n");
       }
       if ($mvar & 128) {
         $pattern[$arow][$channel]{command} = $lastval[$channel]{command};
@@ -382,17 +385,17 @@ sub read_IT() {
       if ($mvar & 1) {
         read(INFILE,$buf,1);
         $lastval[$channel]{note} = $pattern[$arow][$channel]{note} = unpack("C",$buf);
-        print_di(sprintf("0x%X", tell(INFILE)-1)." = ".$arow.": ch".$channel." n ".unpack("C",$buf)."\n");
+        #print_di(sprintf("0x%X", tell(INFILE)-1)." = ".$arow.": ch".$channel." n ".unpack("C",$buf)."\n");
       }
       if ($mvar & 2) {
         read(INFILE,$buf,1);
         $lastval[$channel]{instrument} = $pattern[$arow][$channel]{instrument} = unpack("C",$buf);
-        print_di(sprintf("0x%X", tell(INFILE)-1)." = ".$arow.": ch".$channel." i ".unpack("C",$buf)."\n");
+        #print_di(sprintf("0x%X", tell(INFILE)-1)." = ".$arow.": ch".$channel." i ".unpack("C",$buf)."\n");
       }
       if ($mvar & 4) {
         read(INFILE,$buf,1);
         $lastval[$channel]{volpan} = $pattern[$arow][$channel]{volpan} = unpack("C",$buf);
-        print_di(sprintf("0x%X", tell(INFILE)-1)." = ".$arow.": ch".$channel." v ".unpack("C",$buf)."\n");
+        #print_di(sprintf("0x%X", tell(INFILE)-1)." = ".$arow.": ch".$channel." v ".unpack("C",$buf)."\n");
       }
       if ($mvar & 8) {
         read(INFILE,$buf,2);
@@ -400,8 +403,17 @@ sub read_IT() {
         $pattern[$arow][$channel]{param}) = unpack("CC",$buf);
         $lastval[$channel]{command}=$pattern[$arow][$channel]{command};
         $lastval[$channel]{param}=$pattern[$arow][$channel]{param};
-        print_di(sprintf("0x%X", tell(INFILE)-1)." = ".$arow.": ch".$channel." cp ".unpack("CC",$buf)."\n");
+        #print_di(sprintf("0x%X", tell(INFILE)-1)." = ".$arow.": ch".$channel." cp ".unpack("CC",$buf)."\n");
       }
+      print_di "0x%X = %s ch%d: n=%d i=%d v=%d c=%d p=%d\n",
+        tell(INFILE)-1,
+        $mvar&1 ? "note" : "",
+        $channel,
+        $pattern[$arow][$channel]{note} || 0,
+        $pattern[$arow][$channel]{instrument} || 0,
+        $pattern[$arow][$channel]{volpan} || 0,
+        $pattern[$arow][$channel]{command} || 0,
+        $pattern[$arow][$channel]{param} || 0;
     }
   }
   close(INFILE);
@@ -718,8 +730,8 @@ if (@pattern) {
     $tunedata[$outchan] = [];
     $channel = $CHANNELS[$outchan]-1;
     for ($row=0; $row<$arows; $row++) {
-      $note=$pattern[$row][$channel]{note};
-      if($note>0 && $note<120) { #exclude cuts and offs
+      $note=$pattern[$row][$channel];
+      if($note->{note}>0 && $note->{note}<120) { #exclude cuts and offs
         $notelen=$arows-$row; # assume no end
         $srchrow=$row+1;
         NOTESEARCH: while ($srchrow<$arows) {
@@ -730,8 +742,7 @@ if (@pattern) {
           }
           $srchrow++;
         }
-        $vol=$pattern[$row][$channel]{volpan};
-
+        
         my $start = $row*$rowdur_ms;
         my $length = $notelen*$rowdur_ms;
 
@@ -739,7 +750,7 @@ if (@pattern) {
         my $drumticks = $auto_drum_offs*$AGI_TICK;
         if ($outchan==3 && $auto_drum_offs && $length>$DRUMTICKS+1) { ($length,$pauselength) = ($drumticks, $length - $drumticks); }
 
-        push @{$tunedata[$outchan]}, { note => $note, vol => $vol,   row => $row, rows => $notelen,    start => $start, length => $length };
+        push @{$tunedata[$outchan]}, { note => $note->{note}, vol => $note->{volpan},   row => $row, rows => $notelen,    start => $start, length => $length,   instrument => $note->{instrument}, command => $note->{command}, param => $note->{param} };
         if ($pauselength) { push @{$tunedata[$outchan]}, { note => 0, vol => 0,   row => $row, rows => $notelen,    start => $start+$length, length => $pauselength }; }
         
         #if (1) { print($row.",".$pattern[$row][$channel]{note}.",".$pattern[$row][$channel]{rows}.",".$pattern[$row][$channel]{volpan}."\n"); }
@@ -792,20 +803,17 @@ if ($DEBUG_PROC) {
 #############################################################################################################
 # Here we're expecting to have $tunedata[channel][]{row,note,rows,vol,start,length} to insert rests between notes.
 
-print "Pass 3: Inserting rests\n";
+print "Pass 3: Inserting rests and effects\n";
 $notedata = [];
 for ($channel=0; $channel<$NUMCH; $channel++) {
   $notedata[$channel] = [];
   for ($nn=0; $nn<scalar(@{$tunedata[$channel]}); $nn++) {
     if ($nn==0) {
       my $first_note = $tunedata[$channel][0];
-      if ($first_note->{start} == 0) {
-        push @{$notedata[$channel]}, $first_note;
-      }
-      else {
+      if ($first_note->{start} > 0) {
         push @{$notedata[$channel]}, { note => -1, length => $first_note->{start} };
-        push @{$notedata[$channel]}, $first_note;
       }
+      push @{$notedata[$channel]}, $first_note;
     }
     else {
       my $current_note = $tunedata[$channel][$nn];
@@ -814,12 +822,10 @@ for ($channel=0; $channel<$NUMCH; $channel++) {
       # PREVENT OVERLAPS
       #if ($previous_note->{start} + $previous_note->{length} > $current_note->{start}) { $previous_note->{length} = $current_note->{start}-$previous_note->{start}; }
 
-      if ($current_note->{start} - ($previous_note->{start} + $previous_note->{length}) < $AGI_TICK/2) { # precise enough
-        push @{$notedata[$channel]}, $current_note;
-      } else {
+      if ($current_note->{start} - ($previous_note->{start} + $previous_note->{length}) >= $AGI_TICK/2) {
         push @{$notedata[$channel]}, { note => -1, length => $current_note->{start} - ($previous_note->{start} + $previous_note->{length}) };
-        push @{$notedata[$channel]}, $current_note;
       }
+      push @{$notedata[$channel]}, $current_note;
     }
   }
 }

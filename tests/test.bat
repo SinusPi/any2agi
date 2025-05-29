@@ -5,13 +5,23 @@ fc /b out_kq6flute.ags expect-kq6flute-default.ags >nul
 call :RESULTS %ERRORLEVEL%
 
 echo [47;30m IT: AUTODRUMOFFS 2 [0m
-perl ../it2agi.pl --auto-drum-offs 2 kq6flute.it out_kq6flute_ado2.ags
-fc /b out_kq6flute_ado2.ags expect-kq6flute-ado2.ags >nul
+perl ../it2agi.pl --auto-drum-offs 2 kq6flute.it out_kq6flute.ags
+fc /b out_kq6flute.ags expect-kq6flute-ado2.ags >nul
 call :RESULTS %ERRORLEVEL%
 
 echo [47;30m MOD: INSTRNOTE,INSTRTP [0m
 perl ../it2agi.pl --instr-note 5 13 --instr-note 11 14 --instr-shift 7 -12 --auto-drum-offs 1 cremona.mod out_cremona.ags
 fc /b out_cremona.ags expect-cremona-id-io-ado.ags >nul
+call :RESULTS %ERRORLEVEL%
+
+echo [47;30m MID: DEFAULT [0m
+perl ../it2agi.pl --nomidiremap wlaskot.mid out_wlaskot.ags
+fc /b out_wlaskot.ags expect-wlaskot-noremap.ags >nul
+call :RESULTS %ERRORLEVEL%
+
+echo [47;30m MID: REMAP [0m
+perl ../it2agi.pl wlaskot.mid out_wlaskot.ags
+fc /b out_wlaskot.ags expect-wlaskot-remap.ags >nul
 call :RESULTS %ERRORLEVEL%
 
 echo All tests passed.
