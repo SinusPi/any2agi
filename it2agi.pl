@@ -734,7 +734,7 @@ if (@pattern) {
 
   $rowstarts_ms = [0];
   $rowstartms = 0;
-  for (my $row=0; $row<$arows; $row++) {
+  for (my $row=0; $row<=$arows; $row++) {
     $rowstarts_ms->[$row] = $rowstartms;
     for (my $inchan=0; $inchan<16;$inchan++) {
       my $note=$pattern[$row][$inchan];
@@ -769,7 +769,7 @@ if (@pattern) {
         }
         
         my $start = $rowstarts_ms->[$row];
-        my $length = $notelen * $rowdur_ms;
+        my $length = $notelen * ($rowstarts_ms->[$row+1] - $start); # length in ms
 
         my $pauselength;
         my $drumticks = $auto_drum_offs*$AGI_TICK;
