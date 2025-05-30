@@ -308,7 +308,7 @@ sub read_IT() {
         = split("",$special);
 
   read(INFILE,$buf,16);
-  ($gv, $mv, $is, $it, $sep, $pwd, $msglgth, $msgoffset, $dum1)
+  ($gv, $mv, $IT_SPEED, $IT_TEMPO, $sep, $pwd, $msglgth, $msgoffset, $dum1)
         = unpack("C6SI2",$buf);
 
   read(INFILE,$buf,64);
@@ -329,6 +329,9 @@ sub read_IT() {
   $arow=0;
   $arows=0;
 
+  $IT_CMD_A_SPEED = 1;
+  $IT_CMD_G_PORT = 7;
+  $IT_CMD_H_VIB = 8;
   $IT_CMD_J_ARP = 10;
 
   for ($order=0; $order<($ordnum-1); $order++) {
@@ -448,7 +451,7 @@ sub read_MOD() {
 
   print_di "Song length: %d, patterns: %s\n",$songlen,join(",",@songpats);
 
-  $it=120; $is=6;
+  $IT_TEMPO=120; $IT_SPEED=6;
 
   $patdataoffset = 1084;
   $patdatalen = 1024;
@@ -711,12 +714,11 @@ if (@pattern) {
 
   $tempomode = $tempomode_override || "even";
   
-  $tempo=$it;
-  $speed=$is;
-  $rowdur_ms = (2500 / $it) * $is;
-  printf "Using tempo %d speed %d, 'classic' tempo: 1 row = %.2f ms\n",$it,$is,$rowdur_ms;
+  my $rowdur_agi = 1000/60;
+  my $rowdur_ms = (2500 / $IT_TEMPO) * $IT_SPEED; # 2500 is the default IT row duration in ms
+  printf "Using tempo %d speed %d, 'classic' tempo: 1 row = %.2f ms\n",$IT_TEMPO,$IT_SPEED,$rowdur_ms;
   if ($tempomode eq "even") {
-    $rowdur_agi = 1000/60;
+    # pull the row duration to be a multiple of AGI ticks
     $mul = int($rowdur_ms/$rowdur_agi + 0.5); if ($mul<1) { $mul=1; }
     $rowdur_ms = $mul*$rowdur_agi;
     printf "Tempo mode is 'even', row = %d AGI ticks (%.2f ms)\n",$mul,$rowdur_ms;
@@ -726,16 +728,39 @@ if (@pattern) {
 
   $arows = $#pattern+1;
 
+  # good to know, but unused
+  $IT_NOTE_OFF = 246;
+  $IT_NOTE_CUT = 254;
+
+  $rowstarts_ms = [0];
+  $rowstartms = 0;
+  for (my $row=0; $row<$arows; $row++) {
+    $rowstarts_ms->[$row] = $rowstartms;
+    for (my $inchan=0; $inchan<16;$inchan++) {
+      my $note=$pattern[$row][$inchan];
+      if ($FORMAT eq "IT" && $note->{command}==$IT_CMD_A_SPEED) {
+        $IT_SPEED = $note->{param};
+        $rowdur_ms = (2500 / $IT_TEMPO) * $IT_SPEED; # recalculate row duration
+        if ($tempomode eq "even") {
+          # pull the row duration to be a multiple of AGI ticks... again
+          $mul = int($rowdur_ms/$rowdur_agi + 0.5); if ($mul<1) { $mul=1; }
+          $rowdur_ms = $mul*$rowdur_agi;
+        }
+        printf "Row %d: speed command, new row duration %.2f ms\n",$row,$rowdur_ms;
+      }
+    }
+    $rowstartms += $rowdur_ms;
+  }
+
   for (my $outchan=0; $outchan<$NUMCH; $outchan++) {
-    $tunedata[$outchan] = [];
-    $channel = $CHANNELS[$outchan]-1;
-    for ($row=0; $row<$arows; $row++) {
-      $note=$pattern[$row][$channel];
+    for (my $row=0; $row<$arows; $row++) {
+      my $inchan = $CHANNELS[$outchan]-1;
+      my $note=$pattern[$row][$inchan];
       if($note->{note}>0 && $note->{note}<120) { #exclude cuts and offs
         $notelen=$arows-$row; # assume no end
         $srchrow=$row+1;
         NOTESEARCH: while ($srchrow<$arows) {
-          if($pattern[$srchrow][$channel]{note}) {
+          if($pattern[$srchrow][$inchan]{note}) {
             #if ($channel==1) { print("$row note $note, found end at $srchrow: ".$pattern[$srchrow][$channel]{note}."\n"); }
             $notelen=$srchrow-$row;
             last NOTESEARCH;
@@ -743,8 +768,8 @@ if (@pattern) {
           $srchrow++;
         }
         
-        my $start = $row*$rowdur_ms;
-        my $length = $notelen*$rowdur_ms;
+        my $start = $rowstarts_ms->[$row];
+        my $length = $notelen * $rowdur_ms;
 
         my $pauselength;
         my $drumticks = $auto_drum_offs*$AGI_TICK;
@@ -758,6 +783,7 @@ if (@pattern) {
       }
     }
   }
+
 } else {
 
   if ($DEBUG_PROC) {
@@ -790,12 +816,16 @@ if (@pattern) {
 }
 
 if ($DEBUG_PROC) {
-  print "\n";
+  print "PROCESSING:\n";
   for (my $outchan=0; $outchan<$NUMCH; $outchan++) {
     printf "Channel %d:\n",$outchan+1;
     for ($nn=0; $nn<scalar(@{$tunedata[$outchan]}); $nn++) {
-      $no=$tunedata[$outchan][$nn];
-      printf "%3d. start %6.2f, len %6.2f, note %d\n",$nn,$no->{start},$no->{length},$no->{note};
+      my $note=$tunedata[$outchan][$nn];
+      printf "%3d. start %6.2f, len %6.2f, note %d",$nn,$note->{start},$note->{length},$note->{note};
+      if ($note->{command}) {
+        printf ", cmd %d, param %02x",$note->{command},$note->{param};
+      }
+      printf "\n";
     }
   }
 }
@@ -803,20 +833,24 @@ if ($DEBUG_PROC) {
 #############################################################################################################
 # Here we're expecting to have $tunedata[channel][]{row,note,rows,vol,start,length} to insert rests between notes.
 
+sub min ($$) { $_[$_[0] > $_[1]] }
+
 print "Pass 3: Inserting rests and effects\n";
 $notedata = [];
 for ($channel=0; $channel<$NUMCH; $channel++) {
+  printf "Channel %d: %d notes\n",$channel+1,scalar(@{$tunedata[$channel]});
   $notedata[$channel] = [];
   for ($nn=0; $nn<scalar(@{$tunedata[$channel]}); $nn++) {
+
+    my $current_note = $tunedata[$channel][$nn];
+    
+    #prepend pause?
+    
     if ($nn==0) {
-      my $first_note = $tunedata[$channel][0];
-      if ($first_note->{start} > 0) {
-        push @{$notedata[$channel]}, { note => -1, length => $first_note->{start} };
+      if ($current_note->{start} > 0) {
+        push @{$notedata[$channel]}, { note => -1, length => $current_note->{start} };
       }
-      push @{$notedata[$channel]}, $first_note;
-    }
-    else {
-      my $current_note = $tunedata[$channel][$nn];
+    } else {
       my $previous_note = $tunedata[$channel][$nn-1];
 
       # PREVENT OVERLAPS
@@ -825,7 +859,75 @@ for ($channel=0; $channel<$NUMCH; $channel++) {
       if ($current_note->{start} - ($previous_note->{start} + $previous_note->{length}) >= $AGI_TICK/2) {
         push @{$notedata[$channel]}, { note => -1, length => $current_note->{start} - ($previous_note->{start} + $previous_note->{length}) };
       }
+    }
+
+    # replace note with effects?
+
+    if ($FORMAT eq "IT" && $current_note->{command}==$IT_CMD_J_ARP) { # arpeggio
+    
+      my $arp_phase = 0;
+      printf ("%d. Arpeggio: %d len%d +%02x = %d %d\n", $nn, $current_note->{note}, $current_note->{length}, $current_note->{param}, $current_note->{note} + ($current_note->{param} >> 4), $current_note->{note} + ($current_note->{param} & 0x0F)) if (1);
+      my $arp1 = $current_note->{param} >> 4;
+      my $arp2 = $current_note->{param} & 0x0F;
+      my $length = $current_note->{length};
+      while ($length>=0.01) {
+        my $note;
+        if ($arp_phase==0) {
+          $arp_note = $current_note->{note}
+        } elsif ($arp_phase==1) {
+          $arp_note = $current_note->{note} + $arp1;
+        } else {
+          $arp_note = $current_note->{note} + $arp2;
+        }
+        my $arp_length = min($AGI_TICK, $current_note->{length});
+        push @{$notedata[$channel]}, { note => $arp_note, length => $arp_length, vol => $current_note->{vol}, instrument => $current_note->{instrument} };
+        $length -= $arp_length;
+        $arp_phase++; $arp_phase = $arp_phase % 3; # 0,1,2
+      }
+    
+    } elsif ($FORMAT eq "IT" && $current_note->{command}==$IT_CMD_H_VIB) { # vibrato: SUCKS
+    
+      my $vib_phase = 0;
+      my $vib_length = $current_note->{length};
+      my $vib_speed = $current_note->{param} & 0x0F;
+      my $vib_depth = $current_note->{param} >> 4;
+      printf ("%d. Vibrato: note %d len %d par %02x speed %d depth %d \n", $nn, $current_note->{note}, $current_note->{length}, $current_note->{param}, $vib_speed, $vib_depth) if (1);
+      while ($vib_length>=0.01) {
+        my $note;
+        if ($vib_phase==0 || $vib_phase==2) {
+          $note = $current_note->{note};
+        } elsif ($vib_phase==1) {
+          $note = $current_note->{note} * (1.0003 ** $vib_depth);
+        } else {
+          $note = $current_note->{note} / (1.0003 ** $vib_depth);
+        }
+        my $vib_part_length = min($AGI_TICK, $vib_length);
+        printf("Vib phase %d, note %.2f\n", $vib_phase, $note) if (1);
+        push @{$notedata[$channel]}, { note => $note, length => $vib_part_length, vol => $current_note->{vol}, instrument => $current_note->{instrument} };
+        $vib_length -= $vib_part_length;
+        $vib_phase++; $vib_phase = $vib_phase % 4;
+      }
+    
+    } elsif ($FORMAT eq "IT" && $current_note->{command}==$IT_CMD_G_PORT && $nn>0 && $tunedata[$channel][$nn-1]{note}>0 && $current_note->{length}>$AGI_TICK+0.1) { # portamento
+      my $previous_note = $tunedata[$channel][$nn-1];
+    
+      my $port_length = $current_note->{length};
+      my $steps = int($port_length / $AGI_TICK + 0.5);
+      my $step = 1;
+      printf ("%d. Portamento from %d to %d over %d steps, %d len\n", $nn, $previous_note->{note}, $current_note->{note}, $steps, $port_length) if (1);
+      while ($port_length>=0.01) {
+        my $note = $previous_note->{note} + ($current_note->{note} - $previous_note->{note}) * ($step/$steps);
+        printf("Porta step %d/%d, note %.2f\n", $step,$steps, $note) if (1);
+        my $port_part_length = min($AGI_TICK, $port_length);
+        push @{$notedata[$channel]}, { note => $note, length => $port_part_length, vol => $current_note->{vol}, instrument => $current_note->{instrument} };
+        $port_length -= $port_part_length;
+        if ($step<$steps) { $step++; }
+      }
+  
+    } else { # just push it
+    
       push @{$notedata[$channel]}, $current_note;
+    
     }
   }
 }
@@ -840,7 +942,7 @@ for ($voice=0; $voice<$NUMCH; $voice++) {
   printf " - Channel %d (%s), %d notes\n",$voice+1,$voice<=2&&"voice"||"noise",scalar(@{$notedata[$voice]});
   $prev_dur_frac=0;
   for ($in=0; $in<scalar(@{$notedata[$voice]}); $in++) {
-    $note=$notedata[$voice][$in]{note}; if ($DEBUG_AGI) { printf("n:%3d  ",$note); }
+    $note=$notedata[$voice][$in]{note}; if ($DEBUG_AGI) { printf("n:%6.2f  ",$note); }
     $length=$notedata[$voice][$in]{length}; if ($DEBUG_AGI) { printf("l:%7.1f  ",$length); } # length as time in ms
     $vol=$notedata[$voice][$in]{vol}; if (!defined($vol) || $vol>63) { $vol=63; }
 
@@ -886,6 +988,9 @@ for ($voice=0; $voice<$NUMCH; $voice++) {
 
     if ($note==-1) { $vol=0; } #rest
     $out_att=128 + (($vreg|1)<<4) + (15-($vol>>2));
+    if ($vol<0) { # skip volume!?
+      $out_att=0;
+    }
 
     die "overflow f $out_fv" if ($out_fv<0 || $out_fv>255);  die "overflow v $out_fc" if ($out_fc<0 || $out_fc>255);
     die "overflow a $out_att areg $vreg ".(($vreg|1)<<4)." atten $out_atten" if ($out_att<0 || $out_att>255);
