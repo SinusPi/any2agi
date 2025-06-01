@@ -330,9 +330,19 @@ sub read_IT() {
   $arows=0;
 
   $IT_CMD_A_SPEED = 1;
+  $IT_CMD_B_JUMP = 2;
+  $IT_CMD_C_BREAK = 3;
+  $IT_CMD_D_VOLSL = 4;
+  $IT_CMD_E_PORTU = 5;
+  $IT_CMD_F_PORTD = 6;
   $IT_CMD_G_PORT = 7;
   $IT_CMD_H_VIB = 8;
+  $IT_CMD_I_TREMR = 9;
   $IT_CMD_J_ARP = 10;
+  $IT_CMD_T_TEMPO = 20;
+  # good to know, but unused
+  $IT_NOTE_OFF = 246;
+  $IT_NOTE_CUT = 254;
 
   for ($order=0; $order<($ordnum-1); $order++) {
     my $offset = $patoff[$orders[$order]];
@@ -408,6 +418,9 @@ sub read_IT() {
         $lastval[$channel]{param}=$pattern[$arow][$channel]{param};
         #print_di(sprintf("0x%X", tell(INFILE)-1)." = ".$arow.": ch".$channel." cp ".unpack("CC",$buf)."\n");
       }
+
+      if ($pattern[$arow][$channel]{note}>0 && $INSTRSHIFT[$pattern[$arow][$channel]{instrument}])  { $lastval[$channel]{note} = $pattern[$arow][$channel]{note} = $pattern[$arow][$channel]{note} + $INSTRSHIFT[$pattern[$arow][$channel]{instrument}]; }
+
       print_di "0x%X = %s ch%d: n=%d i=%d v=%d c=%d p=%d\n",
         tell(INFILE)-1,
         $mvar&1 ? "note" : "",
@@ -727,10 +740,6 @@ if (@pattern) {
   }
 
   $arows = $#pattern+1;
-
-  # good to know, but unused
-  $IT_NOTE_OFF = 246;
-  $IT_NOTE_CUT = 254;
 
   $rowstarts_ms = [0];
   $rowstartms = 0;
