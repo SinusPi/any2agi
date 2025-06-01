@@ -718,6 +718,8 @@ sub read_vlq {
 # After reading a tracker module, we're expecting to have a big $pattern[$row][$channel]{note,instrument,volpan,command,param} with all patterns glued.
 # NOT NEEDED when working with a MIDI file.
 
+
+
 if (@pattern) {
   $tunedata=[];
 
@@ -756,7 +758,23 @@ if (@pattern) {
           $rowdur_ms = $mul*$rowdur_agi;
         }
         printf "Row %d: speed command, new row duration %.2f ms\n",$row,$rowdur_ms;
+      } elsif ($FORMAT eq "IT" && $note->{command}==$IT_CMD_T_TEMPO) {
+        if ($note->{param}&0x80>>4 == 0) {
+          printf("T0x command unsupported, skipping.\n");
+        } elsif ($note->{param}&0x80>>4 == 1) {
+          printf("T1x command unsupported, skipping.\n");
+        } elsif ($note->{param}&0x80>>4 >= 2) {
+          $IT_TEMPO = $note->{param};
+        }
+        $rowdur_ms = (2500 / $IT_TEMPO) * $IT_SPEED; # recalculate row duration
+        if ($tempomode eq "even") {
+          # pull the row duration to be a multiple of AGI ticks... again
+          $mul = int($rowdur_ms/$rowdur_agi + 0.5); if ($mul<1) { $mul=1; }
+          $rowdur_ms = $mul*$rowdur_agi;
+        }
+        printf "Row %d: tempo command, new row duration %.2f ms\n",$row,$rowdur_ms;
       }
+
     }
     $rowstartms += $rowdur_ms;
   }
