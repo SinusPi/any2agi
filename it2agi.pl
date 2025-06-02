@@ -593,7 +593,6 @@ sub read_MID() {
         $deltams = $delta / $miditicksbeat * $miditempo / 1000; # timestamp in ms
         $totalms += $deltams;
 
-
         print_di "[+%5d=%5d=%7.3fs]: ",$delta,$totalticks,$totalms;
 
         read($bufread,$_,1); $status=unpack("C",$_);
@@ -701,7 +700,37 @@ sub read_MID() {
     }
     $chunks++; die ("$infile : ERROR: too many chunks?") if ($chunks>100);
   } until (eof(INFILE));
+
+  close(INFILE);
+
+  # merge channels, prevent overlaps
+  for (my $midichan=0; $midichan<32; $midichan++) {
+    $mididata[$midichan] = [ sort { $a->{start} <=> $b->{start} } @{$mididata[$midichan]} ];
+  }
+
+  # prevent overlaps, may have been added when merging
+  for (my $midichan=0; $midichan<32; $midichan++) {
+    for (my $nn=1; $nn<scalar(@{$mididata[$outchan]}); $nn++) {
+      my $current_note = $mididata[$outchan][$nn];
+      my $previous_note = $mididata[$outchan][$nn-1];
+
+      if ($previous_note->{start} + $previous_note->{length} > $current_note->{start}) { $previous_note->{length} = $current_note->{start}-$previous_note->{start}; }
+    }
+  }
+
+  if ($DEBUG_INPUT) {
+    print "\n MIDI:\n";
+    for (my $midichan=0; $midichan<32; $midichan++) {
+      printf "MIDI Channel %d:\n",$midichan;
+      for (my $nn=0; $nn<scalar(@{$mididata[$midichan]}); $nn++) {
+        my $no=$mididata[$midichan][$nn];
+        printf "%3d. start %6.2f, len %6.2f, note %d\n",$nn,$no->{start},$no->{length},$no->{note};
+      }
+    }
+  }
+
 }
+
 sub read_vlq {
   $FH = shift;
   $out=0;
@@ -813,31 +842,11 @@ if (@pattern) {
 
 } else {
 
-  if ($DEBUG_PROC) {
-    print "\n MIDI:\n";
-    for (my $midichan=0; $midichan<32; $midichan++) {
-      printf "MIDI Channel %d:\n",$midichan;
-      for (my $nn=0; $nn<scalar(@{$mididata[$midichan]}); $nn++) {
-        my $no=$mididata[$midichan][$nn];
-        printf "%3d. start %6.2f, len %6.2f, note %d\n",$nn,$no->{start},$no->{length},$no->{note};
-      }
-    }
-  }
-
   # MIDI!
   for (my $outchan=0; $outchan<$NUMCH; $outchan++) {
     $inchan = $CHANNELS[$outchan];
     printf "MIDI channel %d maps to output %d, %d notes\n",$inchan,$outchan+1,scalar(@{$mididata[$inchan]});
-    $mididata[$inchan] = [ sort { $a->{start} <=> $b->{start} } @{$mididata[$inchan]} ];
     $tunedata[$outchan] = $mididata[$inchan];
-
-    # PREVENT OVERLAPS
-    for (my $nn=1; $nn<scalar(@{$tunedata[$outchan]}); $nn++) {
-      my $current_note = $tunedata[$outchan][$nn];
-      my $previous_note = $tunedata[$outchan][$nn-1];
-
-      if ($previous_note->{start} + $previous_note->{length} > $current_note->{start}) { $previous_note->{length} = $current_note->{start}-$previous_note->{start}; }
-    }
   }
 
 }
