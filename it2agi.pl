@@ -213,7 +213,7 @@ USAGE
 }
 
 @CHANNELS=(1,2,3,4); $CHANNELS_DEFAULT=1;
-$AGI_TICK = 16.66667; # ms
+$AGI_TICK = 1000/60; # 16.6667ms
 $POLYMODE = 0;
 $DRUMNOTES = {
   35 => { note => 16, length => 100  }, # bass drum
@@ -549,7 +549,7 @@ sub read_MID() {
   seek(INFILE,0,0);
   $chunks=0;
 
-  if ($CHANNELS_DEFAULT) { @CHANNELS=(0,1,2,9); } # default channels
+  if ($CHANNELS_DEFAULT) { @CHANNELS=(1,2,3,10); $NUMCH=4;} # default channels
 
   my $miditempo = 500000; # default tempo
   my $miditicksbeat = 192; # default ticks per beat
@@ -721,38 +721,54 @@ sub read_MID() {
   }
 
   if ($DEBUG_INPUT) {
-    print "\n MIDI:\n";
+    print "\nMIDI INPUT:\n";
     for (my $midichan=0; $midichan<16; $midichan++) {
-      printf "MIDI Channel %d:\n",$midichan;
+      $notecount = scalar(@{$mididata[$midichan]});
+      next if ($notecount==0); # skip empty channels
+      printf "MIDI Channel %d:\n",$midichan+1;
       for (my $nn=0; $nn<scalar(@{$mididata[$midichan]}); $nn++) {
         my $no=$mididata[$midichan][$nn];
-        printf "%3d. start %6.2f, len %6.2f, note %d\n",$nn,$no->{start},$no->{length},$no->{note};
+        printf "%3d. start %6.2f, len %6.2f, note %d\n",$nn+1,$no->{start},$no->{length},$no->{note};
       }
     }
   }
 
   # MIDI!
-  for (my $outchan=0; $outchan<$NUMCH; $outchan++) {
-    $inchan = $CHANNELS[$outchan];
-    printf "MIDI channel %d maps to output %d, %d notes\n",$inchan,$outchan+1,scalar(@{$mididata[$inchan]});
-    $tunedata[$outchan] = $mididata[$inchan];
-  }
+  #for (my $outchan=0; $outchan<$NUMCH; $outchan++) {
+  #  $inchan = $CHANNELS[$outchan];
+  #  printf "MIDI channel %d maps to output %d, %d notes\n",$inchan,$outchan+1,scalar(@{$mididata[$inchan]});
+  #  $tunedata[$outchan] = $mididata[$inchan];
+  #}
 
-  # $pattern = [];
-  # $arows = 0;
-  # for (my $outchan=0; $outchan<$NUMCH; $outchan++) {
-  #   $chan = $CHANNELS[$outchan]-1;
-  #   printf "Patternizing MIDI channel %d\n",$chan;
-  #   for (my $nn=0; $nn<scalar(@{$mididata[$chan]}); $nn++) {
-  #     my $no=$mididata[$inchan][$nn];
-  #     my $row = int($no->{start} / $AGI_TICK + 0.5);
-  #     $pattern[$row][$chan] = { 
-  #       note => $no->{note},
-  #       volpan => $no->{vol} ? int($no->{vol}*127/64) : 64, # volume to AGI volume
-  #       rows => int($no->{length} / $AGI_TICK + 0.5), # length in AGI ticks
-  #     };
-  #   }
-  # };
+  $arows = 0;
+  for (my $outchan=0; $outchan<$NUMCH; $outchan++) {
+    $inchan = $CHANNELS[$outchan]-1;
+    $notecount = scalar(@{$mididata[$inchan]});
+    next if ($notecount==0); # skip empty channels
+    print_di "Patternizing MIDI channel %d: %d notes\n",$inchan,$notecount;
+    for (my $nn=0; $nn<$notecount; $nn++) {
+      my $no = $mididata[$inchan][$nn];
+      my $row_start = int($no->{start} / $AGI_TICK + 0.5);
+      $pattern[$row_start][$inchan] = { 
+        note => $no->{note},
+        volpan => $no->{vol} ? $no->{vol}>>1 : 64, # volume to AGI volume
+        # rows => int($no->{length} / $AGI_TICK + 0.5), # length in AGI ticks
+      };
+
+      my $row_end = int(($no->{start} + $no->{length}) / $AGI_TICK + 0.5);
+      $pattern[$row_end][$inchan] = { 
+        note => $IT_NOTE_OFF,
+        # volpan => $no->{vol} ? $no->{vol}>>1 : 64, # volume to AGI volume
+        # rows => int($no->{length} / $AGI_TICK + 0.5), # length in AGI ticks
+      };
+
+      print_di "Row %d-%d note %d volpan %d\n",$row_start,$row_end,$pattern[$row_start][$inchan]{note},$pattern[$row_start][$inchan]{volpan};
+
+      $arows = $row_end if ($row_end > $arows);
+    }
+  };
+  $IT_TEMPO = 150; $IT_SPEED = 1; # default tempo and speed
+  print_di "Total rows: %d\n",$arows+1;
 }
 
 sub read_vlq {
