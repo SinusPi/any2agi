@@ -556,6 +556,8 @@ sub read_MID() {
   
   my $MIDICH_DRUM = 9; # default drum channel
 
+  my $mididata = [];
+
   do {
     read(INFILE,my $chunktype,4);
     read(INFILE,$_,4); $length = unpack("L>");
@@ -704,12 +706,12 @@ sub read_MID() {
   close(INFILE);
 
   # merge channels, prevent overlaps
-  for (my $midichan=0; $midichan<32; $midichan++) {
+  for (my $midichan=0; $midichan<16; $midichan++) {
     $mididata[$midichan] = [ sort { $a->{start} <=> $b->{start} } @{$mididata[$midichan]} ];
   }
 
   # prevent overlaps, may have been added when merging
-  for (my $midichan=0; $midichan<32; $midichan++) {
+  for (my $midichan=0; $midichan<16; $midichan++) {
     for (my $nn=1; $nn<scalar(@{$mididata[$outchan]}); $nn++) {
       my $current_note = $mididata[$outchan][$nn];
       my $previous_note = $mididata[$outchan][$nn-1];
@@ -720,7 +722,7 @@ sub read_MID() {
 
   if ($DEBUG_INPUT) {
     print "\n MIDI:\n";
-    for (my $midichan=0; $midichan<32; $midichan++) {
+    for (my $midichan=0; $midichan<16; $midichan++) {
       printf "MIDI Channel %d:\n",$midichan;
       for (my $nn=0; $nn<scalar(@{$mididata[$midichan]}); $nn++) {
         my $no=$mididata[$midichan][$nn];
@@ -729,6 +731,28 @@ sub read_MID() {
     }
   }
 
+  # MIDI!
+  for (my $outchan=0; $outchan<$NUMCH; $outchan++) {
+    $inchan = $CHANNELS[$outchan];
+    printf "MIDI channel %d maps to output %d, %d notes\n",$inchan,$outchan+1,scalar(@{$mididata[$inchan]});
+    $tunedata[$outchan] = $mididata[$inchan];
+  }
+
+  # $pattern = [];
+  # $arows = 0;
+  # for (my $outchan=0; $outchan<$NUMCH; $outchan++) {
+  #   $chan = $CHANNELS[$outchan]-1;
+  #   printf "Patternizing MIDI channel %d\n",$chan;
+  #   for (my $nn=0; $nn<scalar(@{$mididata[$chan]}); $nn++) {
+  #     my $no=$mididata[$inchan][$nn];
+  #     my $row = int($no->{start} / $AGI_TICK + 0.5);
+  #     $pattern[$row][$chan] = { 
+  #       note => $no->{note},
+  #       volpan => $no->{vol} ? int($no->{vol}*127/64) : 64, # volume to AGI volume
+  #       rows => int($no->{length} / $AGI_TICK + 0.5), # length in AGI ticks
+  #     };
+  #   }
+  # };
 }
 
 sub read_vlq {
@@ -758,13 +782,12 @@ if (@pattern) {
 
   $tempomode = $tempomode_override || "even";
   
-  my $rowdur_agi = 1000/60;
   my $rowdur_ms = (2500 / $IT_TEMPO) * $IT_SPEED; # 2500 is the default IT row duration in ms
   printf "Using tempo %d speed %d, 'classic' tempo: 1 row = %.2f ms\n",$IT_TEMPO,$IT_SPEED,$rowdur_ms;
   if ($tempomode eq "even") {
     # pull the row duration to be a multiple of AGI ticks
-    $mul = int($rowdur_ms/$rowdur_agi + 0.5); if ($mul<1) { $mul=1; }
-    $rowdur_ms = $mul*$rowdur_agi;
+    $mul = int($rowdur_ms/$AGI_TICK + 0.5); if ($mul<1) { $mul=1; }
+    $rowdur_ms = $mul*$AGI_TICK;
     printf "Tempo mode is 'even', row = %d AGI ticks (%.2f ms)\n",$mul,$rowdur_ms;
   } else {
     print "Tempo mode is 'exact', row playback may be uneven.\n";
@@ -783,8 +806,8 @@ if (@pattern) {
         $rowdur_ms = (2500 / $IT_TEMPO) * $IT_SPEED; # recalculate row duration
         if ($tempomode eq "even") {
           # pull the row duration to be a multiple of AGI ticks... again
-          $mul = int($rowdur_ms/$rowdur_agi + 0.5); if ($mul<1) { $mul=1; }
-          $rowdur_ms = $mul*$rowdur_agi;
+          $mul = int($rowdur_ms/$AGI_TICK + 0.5); if ($mul<1) { $mul=1; }
+          $rowdur_ms = $mul*$AGI_TICK;
         }
         printf "Row %d: speed command, new row duration %.2f ms\n",$row,$rowdur_ms;
       } elsif ($FORMAT eq "IT" && $note->{command}==$IT_CMD_T_TEMPO) {
@@ -798,8 +821,8 @@ if (@pattern) {
         $rowdur_ms = (2500 / $IT_TEMPO) * $IT_SPEED; # recalculate row duration
         if ($tempomode eq "even") {
           # pull the row duration to be a multiple of AGI ticks... again
-          $mul = int($rowdur_ms/$rowdur_agi + 0.5); if ($mul<1) { $mul=1; }
-          $rowdur_ms = $mul*$rowdur_agi;
+          $mul = int($rowdur_ms/$AGI_TICK + 0.5); if ($mul<1) { $mul=1; }
+          $rowdur_ms = $mul*$AGI_TICK;
         }
         printf "Row %d: tempo command, new row duration %.2f ms\n",$row,$rowdur_ms;
       }
@@ -838,15 +861,6 @@ if (@pattern) {
         #printf ("%.2f %.2f\n",$row*$rowdur_ms,$notelen*$rowdur_ms);
       }
     }
-  }
-
-} else {
-
-  # MIDI!
-  for (my $outchan=0; $outchan<$NUMCH; $outchan++) {
-    $inchan = $CHANNELS[$outchan];
-    printf "MIDI channel %d maps to output %d, %d notes\n",$inchan,$outchan+1,scalar(@{$mididata[$inchan]});
-    $tunedata[$outchan] = $mididata[$inchan];
   }
 
 }
