@@ -255,11 +255,9 @@ binmode(INFILE);
 
 # READING
 
-sub print_di {
-  if ($DEBUG_INPUT) {
-    printf @_;
-  }
-}
+sub print_di { if ($DEBUG_INPUT) { printf @_; }}
+sub print_dp { if ($DEBUG_PROC) { printf @_; }}
+sub print_da { if ($DEBUG_AGI) { printf @_; }}
 
 if (its_SND()) {
   die("$infile : The input file seems to be in AGI SOUND format already.\n");
@@ -751,7 +749,7 @@ sub read_MID() {
       my $row_start = int($no->{start} / $AGI_TICK + 0.5);
       $pattern[$row_start][$inchan] = { 
         note => $no->{note},
-        volpan => $no->{vol} ? $no->{vol}>>1 : 64, # volume to AGI volume
+        volpan => $no->{vol} ? $no->{vol}>>1 : 64, # volume to IT volume
         # rows => int($no->{length} / $AGI_TICK + 0.5), # length in AGI ticks
       };
 
@@ -789,7 +787,7 @@ sub read_vlq {
 
 
 
-if (@pattern) {
+if (0 && @pattern) {
   $tunedata=[];
 
   print "Using channels ".join(",",@CHANNELS)."\n";
@@ -811,49 +809,54 @@ if (@pattern) {
 
   $arows = $#pattern+1;
 
-  $rowstarts_ms = [0];
-  $rowstartms = 0;
-  for (my $row=0; $row<=$arows; $row++) {
-    $rowstarts_ms->[$row] = $rowstartms;
-    for (my $inchan=0; $inchan<16;$inchan++) {
-      my $note=$pattern[$row][$inchan];
-      if ($FORMAT eq "IT" && $note->{command}==$IT_CMD_A_SPEED) {
-        $IT_SPEED = $note->{param};
-        $rowdur_ms = (2500 / $IT_TEMPO) * $IT_SPEED; # recalculate row duration
-        if ($tempomode eq "even") {
-          # pull the row duration to be a multiple of AGI ticks... again
-          $mul = int($rowdur_ms/$AGI_TICK + 0.5); if ($mul<1) { $mul=1; }
-          $rowdur_ms = $mul*$AGI_TICK;
-        }
-        printf "Row %d: speed command, new row duration %.2f ms\n",$row,$rowdur_ms;
-      } elsif ($FORMAT eq "IT" && $note->{command}==$IT_CMD_T_TEMPO) {
-        if ($note->{param}&0x80>>4 == 0) {
-          printf("T0x command unsupported, skipping.\n");
-        } elsif ($note->{param}&0x80>>4 == 1) {
-          printf("T1x command unsupported, skipping.\n");
-        } elsif ($note->{param}&0x80>>4 >= 2) {
-          $IT_TEMPO = $note->{param};
-        }
-        $rowdur_ms = (2500 / $IT_TEMPO) * $IT_SPEED; # recalculate row duration
-        if ($tempomode eq "even") {
-          # pull the row duration to be a multiple of AGI ticks... again
-          $mul = int($rowdur_ms/$AGI_TICK + 0.5); if ($mul<1) { $mul=1; }
-          $rowdur_ms = $mul*$AGI_TICK;
-        }
-        printf "Row %d: tempo command, new row duration %.2f ms\n",$row,$rowdur_ms;
-      }
 
+  # row timing recalculation - DISABLED for now!
+  if (0) {
+    $rowstarts_ms = [0];
+    $rowstartms = 0;
+    for (my $row=0; $row<=$arows; $row++) {
+      $rowstarts_ms->[$row] = $rowstartms;
+      for (my $inchan=0; $inchan<16;$inchan++) {
+        my $note=$pattern[$row][$inchan];
+        if ($FORMAT eq "IT" && $note->{command}==$IT_CMD_A_SPEED) {
+          $IT_SPEED = $note->{param};
+          $rowdur_ms = (2500 / $IT_TEMPO) * $IT_SPEED; # recalculate row duration
+          if ($tempomode eq "even") {
+            # pull the row duration to be a multiple of AGI ticks... again
+            $mul = int($rowdur_ms/$AGI_TICK + 0.5); if ($mul<1) { $mul=1; }
+            $rowdur_ms = $mul*$AGI_TICK;
+          }
+          printf "Row %d: speed command, new row duration %.2f ms\n",$row,$rowdur_ms;
+        } elsif ($FORMAT eq "IT" && $note->{command}==$IT_CMD_T_TEMPO) {
+          if ($note->{param}&0x80>>4 == 0) {
+            printf("T0x command unsupported, skipping.\n");
+          } elsif ($note->{param}&0x80>>4 == 1) {
+            printf("T1x command unsupported, skipping.\n");
+          } elsif ($note->{param}&0x80>>4 >= 2) {
+            $IT_TEMPO = $note->{param};
+          }
+          $rowdur_ms = (2500 / $IT_TEMPO) * $IT_SPEED; # recalculate row duration
+          if ($tempomode eq "even") {
+            # pull the row duration to be a multiple of AGI ticks... again
+            $mul = int($rowdur_ms/$AGI_TICK + 0.5); if ($mul<1) { $mul=1; }
+            $rowdur_ms = $mul*$AGI_TICK;
+          }
+          printf "Row %d: tempo command, new row duration %.2f ms\n",$row,$rowdur_ms;
+        }
+
+      }
+      $rowstartms += $rowdur_ms;
     }
-    $rowstartms += $rowdur_ms;
   }
 
+  if (0) {
   for (my $outchan=0; $outchan<$NUMCH; $outchan++) {
     for (my $row=0; $row<$arows; $row++) {
       my $inchan = $CHANNELS[$outchan]-1;
       my $note=$pattern[$row][$inchan];
       if($note->{note}>0 && $note->{note}<120) { #exclude cuts and offs
-        $notelen=$arows-$row; # assume no end
-        $srchrow=$row+1;
+        my $notelen=$arows-$row; # assume no end
+        my $srchrow=$row+1;
         NOTESEARCH: while ($srchrow<$arows) {
           if($pattern[$srchrow][$inchan]{note}) {
             #if ($channel==1) { print("$row note $note, found end at $srchrow: ".$pattern[$srchrow][$channel]{note}."\n"); }
@@ -863,20 +866,27 @@ if (@pattern) {
           $srchrow++;
         }
         
-        my $start = $rowstarts_ms->[$row];
-        my $length = $notelen * ($rowstarts_ms->[$row+1] - $start); # length in ms
+        my $drumpause;
+        if ($outchan==3 && $auto_drum_offs && $notelen>$auto_drum_offs) { ($notelen,$drumpause) = ($auto_drum_offs,$notelen - $auto_drum_offs); }
 
-        my $pauselength;
-        my $drumticks = $auto_drum_offs*$AGI_TICK;
-        if ($outchan==3 && $auto_drum_offs && $length>$DRUMTICKS+1) { ($length,$pauselength) = ($drumticks, $length - $drumticks); }
-
-        push @{$tunedata[$outchan]}, { note => $note->{note}, vol => $note->{volpan},   row => $row, rows => $notelen,    start => $start, length => $length,   instrument => $note->{instrument}, command => $note->{command}, param => $note->{param} };
-        if ($pauselength) { push @{$tunedata[$outchan]}, { note => 0, vol => 0,   row => $row, rows => $notelen,    start => $start+$length, length => $pauselength }; }
+        push @{$tunedata[$outchan]}, {
+          note => $note->{note}, vol => $note->{volpan},
+          row => $row, rows => $notelen,
+          #start => $start, length => $length,
+          instrument => $note->{instrument}, command => $note->{command}, param => $note->{param}
+        };
+        
+        if ($drumpause) { push @{$tunedata[$outchan]}, {
+          note => -1, vol => 0,
+          row => $row+$notelen, rows => $drumpause,
+          #start => $start+$length, length => $pauselength
+        }; }
         
         #if (1) { print($row.",".$pattern[$row][$channel]{note}.",".$pattern[$row][$channel]{rows}.",".$pattern[$row][$channel]{volpan}."\n"); }
         #printf ("%.2f %.2f\n",$row*$rowdur_ms,$notelen*$rowdur_ms);
       }
     }
+  }
   }
 
 }
@@ -887,7 +897,7 @@ if ($DEBUG_PROC) {
     printf "Channel %d:\n",$outchan+1;
     for ($nn=0; $nn<scalar(@{$tunedata[$outchan]}); $nn++) {
       my $note=$tunedata[$outchan][$nn];
-      printf "%3d. start %6.2f, len %6.2f, note %d",$nn,$note->{start},$note->{length},$note->{note};
+      printf "%3d. note %d vol %d",$nn,$note->{note},$note->{vol};
       if ($note->{command}) {
         printf ", cmd %d, param %02x",$note->{command},$note->{param};
       }
@@ -901,8 +911,71 @@ if ($DEBUG_PROC) {
 
 sub min ($$) { $_[$_[0] > $_[1]] }
 
-print "Pass 3: Inserting rests and effects\n";
+print "Pass 3: Rendering rests and effects\n";
 $notedata = [];
+for (my $outchan=0; $outchan<$NUMCH; $outchan++) {
+  $lastnote[$outchan] = { note => -1, length => 0, vol => 0 }; # no note playing
+}
+
+my $durmul=1;
+if ($FORMAT=="IT") {
+  my $rowdur_ms = (2500 / $IT_TEMPO) * $IT_SPEED; # 2500 is the default IT row duration in ms
+  printf "IT defines tempo %d speed %d, 'classic' tempo: 1 row = %.2f ms\n",$IT_TEMPO,$IT_SPEED,$rowdur_ms;
+  $tempomode = $tempomode_override || "even";
+  if ($tempomode eq "even") {
+    # pull the row duration to be a multiple of AGI ticks
+    $mul = int($rowdur_ms/$AGI_TICK + 0.5); if ($mul<1) { $mul=1; }
+    $rowdur_ms = $mul*$AGI_TICK;
+    printf "Tempo mode is 'even', row = %d AGI ticks (%.2f ms)\n",$mul,$rowdur_ms;
+  } else {
+    print "Tempo mode is 'exact', row playback may be uneven.\n";
+  }
+}
+
+for (my $row=0; $row<=$arows; $row++) {
+  for (my $outchan=0; $outchan<$NUMCH; $outchan++) {
+    my $inchan = $CHANNELS[$outchan]-1;
+    my $note = $pattern[$row][$inchan];
+    if (!$note && $row==0) { # first row, no note
+      $note = { note => -1, vol => 0 }; # no note playing
+    }
+    print_dp "Row %d, channel %d from %d: ",$row+1,$outchan+1,$inchan+1;
+
+    # what's at this row in this channel? an old note still playing, or a new note?
+    if ($note) {
+      # new note, start playing it
+      my $vol = defined($note->{volpan}) ? $note->{volpan} : 64; # default volume is 64
+      my $not = ($note->{note}>0 && $note->{note}<120) ? $note->{note} : -1, # -1 means no note
+      print_dp "new note %d vol %d\n",$not,$vol;
+      $lastnote[$outchan] = $note;
+      push(@{$notedata[$outchan]}, {
+        length => 1, # so far
+        note => $not,
+        vol  => $vol
+      });
+    } else {
+      #my $last = $lastnote[$outchan];
+      # no new note, continue playing old note
+      $notedata[$outchan][-1]{length}++;
+      print_dp "old %d\n",$notedata[$outchan][-1]{length};
+    }
+
+    for (my $m;$m<$mul-1;$m++) { # mul>1 means we have to repeat the last note
+      # add more ticks to the last note
+      $notedata[$outchan][-1]{length}++;
+      print_dp "add tick %d\n",$notedata[$outchan][-1]{length};
+    }
+  }
+}
+for (my $outchan=0; $outchan<$NUMCH; $outchan++) {
+  # remove last note if it was a pause
+  if ($notedata[$outchan][-1]{note} == -1) {
+    pop @{$notedata[$outchan]};
+  }
+}
+
+
+if (0) {
 for ($channel=0; $channel<$NUMCH; $channel++) {
   printf "Channel %d: %d notes\n",$channel+1,scalar(@{$tunedata[$channel]});
   $notedata[$channel] = [];
@@ -929,14 +1002,16 @@ for ($channel=0; $channel<$NUMCH; $channel++) {
 
     # replace note with effects?
 
+    $FORMAT="effects_disabled";
+
     if ($FORMAT eq "IT" && $current_note->{command}==$IT_CMD_J_ARP) { # arpeggio
     
       my $arp_phase = 0;
       printf ("%d. Arpeggio: %d len%d +%02x = %d %d\n", $nn, $current_note->{note}, $current_note->{length}, $current_note->{param}, $current_note->{note} + ($current_note->{param} >> 4), $current_note->{note} + ($current_note->{param} & 0x0F)) if (1);
       my $arp1 = $current_note->{param} >> 4;
       my $arp2 = $current_note->{param} & 0x0F;
-      my $length = $current_note->{length};
-      while ($length>=0.01) {
+      my $length = $current_note->{rows};
+      while ($length) {
         my $note;
         if ($arp_phase==0) {
           $arp_note = $current_note->{note}
@@ -945,7 +1020,6 @@ for ($channel=0; $channel<$NUMCH; $channel++) {
         } else {
           $arp_note = $current_note->{note} + $arp2;
         }
-        my $arp_length = min($AGI_TICK, $current_note->{length});
         push @{$notedata[$channel]}, { note => $arp_note, length => $arp_length, vol => $current_note->{vol}, instrument => $current_note->{instrument} };
         $length -= $arp_length;
         $arp_phase++; $arp_phase = $arp_phase % 3; # 0,1,2
@@ -997,6 +1071,22 @@ for ($channel=0; $channel<$NUMCH; $channel++) {
     }
   }
 }
+}
+
+if ($DEBUG_PROC) {
+  print "AFTER RESTS::\n";
+  for (my $outchan=0; $outchan<$NUMCH; $outchan++) {
+    printf "Channel %d:\n",$outchan+1;
+    for ($nn=0; $nn<scalar(@{$notedata[$outchan]}); $nn++) {
+      my $note=$notedata[$outchan][$nn];
+      printf "%3d. note %d vol %d",$nn,$note->{note},$note->{vol};
+      if ($note->{command}) {
+        printf ", cmd %d, param %02x",$note->{command},$note->{param};
+      }
+      printf "\n";
+    }
+  }
+}
 
 ###################################################################
 # Notes and rests are ready in $notedata
@@ -1008,17 +1098,18 @@ for ($voice=0; $voice<$NUMCH; $voice++) {
   printf " - Channel %d (%s), %d notes\n",$voice+1,$voice<=2&&"voice"||"noise",scalar(@{$notedata[$voice]});
   $prev_dur_frac=0;
   for ($in=0; $in<scalar(@{$notedata[$voice]}); $in++) {
-    $note=$notedata[$voice][$in]{note}; if ($DEBUG_AGI) { printf("n:%6.2f  ",$note); }
-    $length=$notedata[$voice][$in]{length}; if ($DEBUG_AGI) { printf("l:%7.1f  ",$length); } # length as time in ms
+    $note=$notedata[$voice][$in]{note}; # if ($DEBUG_AGI) { printf("n:%6.2f  ",$note); }
+    $length=$notedata[$voice][$in]{length};# if ($DEBUG_AGI) { printf("l:%3d  ",$length); } # length in ticks
     $vol=$notedata[$voice][$in]{vol}; if (!defined($vol) || $vol>63) { $vol=63; }
 
     #if ($length==0) { next; } # skip zero-length notes
 
     # prepare duration
 
-    $duration_f = $length / $AGI_TICK;
-    $out_duration = int($duration_f + $prev_dur_frac + 0.5); if ($out_duration<1) { $out_duration=1; }
-    $prev_dur_frac = $duration_f - $out_duration; # used in 'exact' tempo mode
+    #$duration_f = $length / $AGI_TICK;
+    #$out_duration = int($duration_f + $prev_dur_frac + 0.5); if ($out_duration<1) { $out_duration=1; }
+    #$prev_dur_frac = $duration_f - $out_duration; # used in 'exact' tempo mode
+    $out_duration = $length;
     
     # prepare frequency
     
@@ -1064,7 +1155,7 @@ for ($voice=0; $voice<$NUMCH; $voice++) {
     $packet = pack("SCCC",$out_duration,$out_fv,$out_fc,$out_att);
     $snddata[$voice] = $snddata[$voice].$packet;
     
-    if ($DEBUG_AGI) { printf(" = d %3d f %4d v %3d = %02x %02x %02x %02x %02x\n",$out_duration,$voice<=2 && $freq || $out_noisetype*10+$out_noisefreq,$vol,ord(substr($packet,0,1)),ord(substr($packet,1,1)),$out_fv,$out_fc,$out_att); }
+    if ($DEBUG_AGI) { printf("%4d: d=%3d n=%d/%6.1fHz v=%3d  =  %02x %02x %02x %02x %02x\n",$in,$out_duration,$note,$voice<=2 && $freq || $out_noisetype*10+$out_noisefreq,$vol,ord(substr($packet,0,1)),ord(substr($packet,1,1)),$out_fv,$out_fc,$out_att); }
   }
 }
 
