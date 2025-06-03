@@ -442,7 +442,7 @@ sub read_MOD() {
   $FORMAT="MOD";
   seek(INFILE,0,0);
   read(INFILE,my $title,20);
-  print("Reading Protracker module '$title'...\n");
+  print("Pass 1. Reading Protracker module '$title'...\n");
   # samples, ignore
   for (my $sn=0;$sn<31;$sn++) {
     read(INFILE,my $sname,22);
@@ -891,7 +891,7 @@ if (0 && @pattern) {
 
 }
 
-if ($DEBUG_PROC) {
+if (0 && $DEBUG_PROC) {
   print "PROCESSING:\n";
   for (my $outchan=0; $outchan<$NUMCH; $outchan++) {
     printf "Channel %d:\n",$outchan+1;
@@ -932,6 +932,9 @@ if ($FORMAT=="IT") {
   }
 }
 
+$arows = $#pattern+1;
+print "Total rows: $arows\n";
+
 for (my $row=0; $row<=$arows; $row++) {
   for (my $outchan=0; $outchan<$NUMCH; $outchan++) {
     my $inchan = $CHANNELS[$outchan]-1;
@@ -942,28 +945,40 @@ for (my $row=0; $row<=$arows; $row++) {
     print_dp "Row %d, channel %d from %d: ",$row+1,$outchan+1,$inchan+1;
 
     # what's at this row in this channel? an old note still playing, or a new note?
-    if ($note) {
-      # new note, start playing it
-      my $vol = defined($note->{volpan}) ? $note->{volpan} : 64; # default volume is 64
-      my $not = ($note->{note}>0 && $note->{note}<120) ? $note->{note} : -1, # -1 means no note
-      print_dp "new note %d vol %d\n",$not,$vol;
-      $lastnote[$outchan] = $note;
-      push(@{$notedata[$outchan]}, {
-        length => 1, # so far
-        note => $not,
-        vol  => $vol
-      });
-    } else {
-      #my $last = $lastnote[$outchan];
-      # no new note, continue playing old note
-      $notedata[$outchan][-1]{length}++;
-      print_dp "old %d\n",$notedata[$outchan][-1]{length};
-    }
-
-    for (my $m;$m<$mul-1;$m++) { # mul>1 means we have to repeat the last note
-      # add more ticks to the last note
-      $notedata[$outchan][-1]{length}++;
-      print_dp "add tick %d\n",$notedata[$outchan][-1]{length};
+    for (my $m=0;$m<$mul;$m++) { # mul>1 means we have to add more ticks to the last note
+      if ($m>0) { undef $note; } # no note, just continue playing the last note
+      if ($note) {
+        # new note, start playing it
+        my $vol = defined($note->{volpan}) ? $note->{volpan} : 64; # default volume is 64
+        my $not = ($note->{note}>0 && $note->{note}<120) ? $note->{note} : -1, # -1 means no note
+        print_dp "new note %d vol %d\n",$not,$vol;
+        $lastnote[$outchan] = $note;
+        if ($not==-1 && $notedata[$outchan] && ($notedata[$outchan][-1]{note} == -1)) {
+          # just continue the pause, likely a drum-off
+          $notedata[$outchan][-1]{length}++;
+        } else {
+          push(@{$notedata[$outchan]}, {
+            length => 1, # so far
+            note => $not,
+            vol  => $vol
+          });
+        }
+      } else {
+        # continue last note/pause, or do effects
+        #my $last = $lastnote[$outchan];
+        # no new note, continue playing old note
+        $notedata[$outchan][-1]{length}++;
+        if ($outchan==3 && $auto_drum_offs && $notedata[$outchan][-1]{note}>0 && $notedata[$outchan][-1]{length}>$auto_drum_offs) {
+          $notedata[$outchan][-1]{length}--; # remove one tick
+          push(@{$notedata[$outchan]}, {
+            length => 1, # so far
+            note => -1,
+            vol  => 0
+          });
+          print_dp "drum off!\n";
+        }
+        print_dp "old %d\n",$notedata[$outchan][-1]{length};
+      }
     }
   }
 }
@@ -1155,7 +1170,10 @@ for ($voice=0; $voice<$NUMCH; $voice++) {
     $packet = pack("SCCC",$out_duration,$out_fv,$out_fc,$out_att);
     $snddata[$voice] = $snddata[$voice].$packet;
     
-    if ($DEBUG_AGI) { printf("%4d: d=%3d n=%d/%6.1fHz v=%3d  =  %02x %02x %02x %02x %02x\n",$in,$out_duration,$note,$voice<=2 && $freq || $out_noisetype*10+$out_noisefreq,$vol,ord(substr($packet,0,1)),ord(substr($packet,1,1)),$out_fv,$out_fc,$out_att); }
+    if ($DEBUG_AGI) { printf("%4d: n=%d/%6.1fHz v=%3d  d=%3d  =  %02x %02x %02x %02x %02x\n",
+     $in,
+     $note,$voice<=2 && $freq || $out_noisetype*10+$out_noisefreq,$vol,$out_duration,
+     ord(substr($packet,0,1)),ord(substr($packet,1,1)),$out_fv,$out_fc,$out_att); }
   }
 }
 
