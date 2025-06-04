@@ -249,8 +249,9 @@ while ($v = shift @ARGV) {
   elsif ($v eq "--channels") { @CHANNELS = split(",",shift @ARGV); $CHANNELS_DEFAULT=0; }
   elsif ($v eq "--tempo-exact") { $tempomode_override="exact"; }
   elsif ($v eq "--auto-drum-offs") { $auto_drum_offs = shift @ARGV; }
-  elsif ($v eq "--instr-note") { $instr = shift @ARGV; $note = shift @ARGV; $INSTRNOTE[$instr]=$note; }
-  elsif ($v eq "--instr-shift") { $instr = shift @ARGV; $shift = shift @ARGV; $INSTRSHIFT[$instr]=$shift; }
+  elsif ($v eq "--instr-note")  { my $instr = shift @ARGV; my $note  = shift @ARGV; $INSTRNOTE [$instr]=$note; }
+  elsif ($v eq "--instr-shift") { my $instr = shift @ARGV; my $shift = shift @ARGV; $INSTRSHIFT[$instr]=$shift; }
+  elsif ($v eq "--instr-arp")   { my $instr = shift @ARGV; my $arp   = shift @ARGV; if ($arp =~ /^[0-9A-Fa-f]+$/) { $INSTRARP[$instr] = hex $arp; } else { die "Invalid value provided for --instr-arp.\n"; }}
   elsif ($v eq "--midipoly") { $POLYMODE = 1; }
   elsif ($v eq "--nomidiremap") { $NOMIDIREMAP = 1; }
   else {
@@ -492,14 +493,18 @@ sub read_MOD() {
           next;
         }
         my $note;
+        my $notedata = {};
         if ($period) {
           $note = $periodtonote{$period} || -1;
           if ($note>0 && $INSTRSHIFT[$samplenum])  { $note+=$INSTRSHIFT[$samplenum]; }
           if ($note>0 && $INSTRNOTE[$samplenum]) { $note=$INSTRNOTE[$samplenum]; }
+          $notedata->{note} = $note;
+          $notedata->{instrument} = $samplenum;
+          $notedata->{volpan} = 64; # default volume
         }
-        $notedata = { note=>$note }; # may be undef
 
         if ($command==0x0C) { $notedata->{volpan}=$args; }
+        if ($INSTRARP[$samplenum]) { $notedata->{command}=$IT_CMD_J_ARP; $notedata->{param}=$INSTRARP[$samplenum]; $notedata->{instrarp}=1; }
         $pattern[$arow+$row][$chan] = $notedata;
         
         print_di "%02d %1X%02x  ",$periodtonote{$period},$command,$args
@@ -896,16 +901,20 @@ if (0 && @pattern) {
 }
 
 if ($DEBUG_PROC) {
-  print "PROCESSING:\n";
-  for ($row=0; $row<scalar(@{$pattern[$outchan]}); $row++) {
-    printf "%3d. ",$row;
+  print "PROCESSING PATTERN:\n";
+  # print numbers of channels in $CHANNELS in one line
+  print "      "; print join("  |  ", map { sprintf "  Channel %2d  ", $_ } @CHANNELS); print "\n";
+
+  for ($row=0; $row<scalar(@pattern); $row++) {
+    printf "%4d. ",$row;
     for (my $outchan=0; $outchan<$NUMCH; $outchan++) {
       my $inchan = $CHANNELS[$outchan]-1;
       my $note=$pattern[$row][$inchan];
-      printf "n %3d v %2d",$note->{note},$note->{volpan};
-      if ($note->{command}) {
-        printf ", %2d %02x   ",$note->{command},$note->{param};
-      }
+      printf "n%3s v%2s %2s %2s  |  ",
+        defined $note->{note} ? (($note->{note}==$IT_NOTE_CUT||$note->{note}==$IT_NOTE_OFF) ? "^^^" : sprintf "%3d",$note->{note}) : "---",
+        defined $note->{volpan} ? sprintf "%2d",$note->{volpan} : "--",
+        defined $note->{command} ? sprintf "%2d",$note->{command} : "--",
+        defined $note->{param} ? sprintf "%02x",$note->{param} : "--";
     }
     printf "\n";
   }
@@ -942,7 +951,12 @@ print "Total rows: $arows\n";
 
 my $row_ticks = 0;
 
+for (my $outchan=0; $outchan<$NUMCH; $outchan++) { $notedata[$outchan] = []; $chans[$outchan] = { }; } # no note playing
+
 for (my $row=0; $row<=$arows; $row++) {
+
+  $row_ticks += $ticks_per_row; # how many AGI ticks in this row?
+
   for (my $outchan=0; $outchan<$NUMCH; $outchan++) {
     my $inchan = $CHANNELS[$outchan]-1;
     my $note = $pattern[$row][$inchan];
@@ -951,52 +965,93 @@ for (my $row=0; $row<=$arows; $row++) {
     }
     print_dp "Row %d, channel %d from %d: ",$row+1,$outchan+1,$inchan+1;
 
-    $row_ticks += $ticks_per_row; # how many AGI ticks in this row?
+    my %chan = %{$chans[$outchan]};
+
+    # commands don't carry over solid rows, only over extras
+    undef $chan{command};
+    undef $chan{param};
 
     # what's at this row in this channel? an old note still playing, or a new note?
     for (my $m=0;$m<$row_ticks;$m++) { # mul>1 means we have to add more ticks to the last note
-      if ($m>0) { undef $note; } # no note, just continue playing the last note
-      if ($note) {
-        print_dp "note %d vol %d ",$note->{note},$note->{volpan};
+      if ($m>0) { print_dp "bonus row %d: ",$m; undef $note; } # no note, simulate empty row
+      my %changed = ();
+      
+      if ($note) { # SOMETHING changes, not necessarily a new note
+        print_dp "NEW: ".join(" ",map { "$_=$note->{$_}" } sort keys %{$note})."\n";
         # new note, start playing it
-        my $vol = defined($note->{volpan}) ? $note->{volpan} : 64; # default volume is 64
-        my $not = $note->{note}; if ($not==$IT_NOTE_CUT || $not==$IT_NOTE_OFF) { $not=-1; } # -1 means no note
-        if ($not==-1) { $vol=0; } # no note, no volume
-        print_dp "new note %d vol %d\n",$not,$vol;
-        $lastnote[$outchan] = $note;
-        if ($not==-1 && $notedata[$outchan] && ($notedata[$outchan][-1]{note} == -1)) {
+        if (defined $note->{note}) {
+          my $n = $note->{note};
+          if ($n==$IT_NOTE_CUT || $n==$IT_NOTE_OFF) { $n=-1; } # -1 means pause start
+          $chan{note}=$n; # note number
+          $changed{note}=1;
+        }
+        if ((defined $note->{volpan} && $note->{volpan}<=64) || defined $note->{note}) { # others may be panning
+          my $vol = defined $note->{volpan} ? $note->{volpan} : 64; # volume, default 64
+          if ($chan{note}==-1) { $vol = 0; } # no note, no volume
+          #if ($chan{note}!=$vol) {
+            $chan{vol} = $vol; # volume
+            $changed{vol} = 1;
+          #}
+        }
+        #if ($not>0 && $not<200 && !defined($vol)) { $vol=32; } # temp default volume?        
+        
+        if ($chan{note}==-1 && scalar(@{$notedata[$outchan]}) && $notedata[$outchan][-1]{note}==-1) {
           # just continue the pause, likely a drum-off
           $notedata[$outchan][-1]{length}++;
-        } else {
-          if ($not==0 && $notedata[$outchan]) { # volume/effect
-            $not = $notedata[$outchan][-1]{note}; # keep the last note
-            print_dp "keep last note %d\n",$not;
-          }
-          push(@{$notedata[$outchan]}, {
-            length => 1, # so far
-            note => $not,
-            vol  => $vol
-          });
+          $chans[$outchan]=$chan;
+          next;
         }
-      } else {
-        # continue last note/pause, or do effects
-        #my $last = $lastnote[$outchan];
-        # no new note, continue playing old note
-        $notedata[$outchan][-1]{length}++;
-        if ($outchan==3 && $auto_drum_offs && $notedata[$outchan][-1]{note}>0 && $notedata[$outchan][-1]{length}>$auto_drum_offs) {
-          $notedata[$outchan][-1]{length}--; # remove one tick
-          push(@{$notedata[$outchan]}, {
-            length => 1, # so far
-            note => -1,
-            vol  => 0
-          });
-          print_dp "drum off!\n";
+
+        $chan{instrument} = $note->{instrument} || 0; # instrument number - unused in AGI, may be looked up, doesn't need to $changed
+        if (defined $note->{command}) {
+          $chan{command} = $note->{command};
+          $changed{command} = 1; # command : may not change
         }
-        print_dp "old %d\n",$notedata[$outchan][-1]{length};
+        if (defined $note->{param}) {
+          $chan{param} = $note->{param};
+          $changed{param} = 1; # param : may not change
+        }
       }
+
+      print_dp "chan: ".join(" ",map { "$_=$chan{$_}" } sort keys %chan)."\n";
+
+      # now do effects, based on $chan
+
+      if ($outchan==3 && $auto_drum_offs && scalar @{$notedata[$outchan]} && $notedata[$outchan][-1]{note}>0 && $notedata[$outchan][-1]{length}>=$auto_drum_offs) {
+        # auto drum off
+        $chan{note}=-1; $chan{vol}=0; $changed{note}=1; $changed{vol}=1; # drum off
+        print_dp "drum off!\n";
+      } elsif ($chan{command}==$IT_CMD_J_ARP || $INSTRARP[$chan{instrument}]) {
+        my $arpphase = $chan{arpphase}||0;
+        if ($changed{note}) { $arpphase = 0; } # reset arpeggio phase on note change
+          my $arps = $chan{command}==$IT_CMD_J_ARP ? $chan{param} : $INSTRARP[$chan{instrument}];
+        my @arpn = (0, $arps >> 4, $arps & 0x0F);
+        $chan{outnote} = $chan->{note} + $arpn[$arpphase]; # leave the note unchanged, but add arpeggio
+        print_dp "arpeggio phase %d = %d\n",$arpphase,$chan{outnote};
+        $changed{note} = 1; # note changed
+        $chan{arpphase}++; $chan{arpphase}%=3;
+      }
+      print_dp "changes: %s\n",join(",",map { "$_=$chan{$_}" } sort keys %changed);
+
+      # no more changes, just output
+
+      if ($changed{note} || $changed{vol}) {
+        push(@{$notedata[$outchan]}, {
+          length => 1, # so far
+          note => $chan{outnote} || $chan{note},
+          vol  => $chan{vol},
+        });
+        print_dp "new %d\n",$notedata[$outchan][-1]{note};
+      } else {
+        $notedata[$outchan][-1]{length}++;
+        print_dp "old %d=%d\n",$notedata[$outchan][-1]{note},$notedata[$outchan][-1]{length};
+      }
+      
+      undef $chan{outnote};
+      $chans[$outchan] = %chan;
     }
-    $row_ticks -= int($row_ticks);
   }
+  $row_ticks -= int($row_ticks);
 }
 for (my $outchan=0; $outchan<$NUMCH; $outchan++) {
   # remove last note if it was a pause
