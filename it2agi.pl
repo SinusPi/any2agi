@@ -504,7 +504,7 @@ sub read_MOD() {
         }
 
         if ($command==0x0C) { $notedata->{volpan}=$args; }
-        if ($INSTRARP[$samplenum]) { $notedata->{command}=$IT_CMD_J_ARP; $notedata->{param}=$INSTRARP[$samplenum]; $notedata->{instrarp}=1; }
+        #if ($INSTRARP[$samplenum]) { $notedata->{instrarp}=$INSTRARP[$samplenum]; }
         $pattern[$arow+$row][$chan] = $notedata;
         
         print_di "%02d %1X%02x  ",$periodtonote{$period},$command,$args
@@ -1002,7 +1002,7 @@ for (my $row=0; $row<=$arows; $row++) {
           next;
         }
 
-        $chan{instrument} = $note->{instrument} || 0; # instrument number - unused in AGI, may be looked up, doesn't need to $changed
+        if (defined $note->{instrument}) { $chan{instrument} = $note->{instrument}; } # instrument number - unused in AGI, may be looked up, doesn't need to $changed
         if (defined $note->{command}) {
           $chan{command} = $note->{command};
           $changed{command} = 1; # command : may not change
@@ -1013,7 +1013,7 @@ for (my $row=0; $row<=$arows; $row++) {
         }
       }
 
-      print_dp "chan: ".join(" ",map { "$_=$chan{$_}" } sort keys %chan)."\n";
+      print_dp "chan %d: %s",$outchan,join(" ",map { "$_=$chan{$_}" } sort keys %chan)."\n";
 
       # now do effects, based on $chan
 
@@ -1024,7 +1024,7 @@ for (my $row=0; $row<=$arows; $row++) {
       } elsif ($chan{command}==$IT_CMD_J_ARP || $INSTRARP[$chan{instrument}]) {
         my $arpphase = $chan{arpphase}||0;
         if ($changed{note}) { $arpphase = 0; } # reset arpeggio phase on note change
-          my $arps = $chan{command}==$IT_CMD_J_ARP ? $chan{param} : $INSTRARP[$chan{instrument}];
+        my $arps = $chan{command}==$IT_CMD_J_ARP ? $chan{param} : $INSTRARP[$chan{instrument}];
         my @arpn = (0, $arps >> 4, $arps & 0x0F);
         $chan{outnote} = $chan->{note} + $arpn[$arpphase]; # leave the note unchanged, but add arpeggio
         print_dp "arpeggio phase %d = %d\n",$arpphase,$chan{outnote};
@@ -1048,7 +1048,7 @@ for (my $row=0; $row<=$arows; $row++) {
       }
       
       undef $chan{outnote};
-      $chans[$outchan] = %chan;
+      %{$chans[$outchan]} = %chan;
     }
   }
   $row_ticks -= int($row_ticks);
