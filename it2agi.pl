@@ -215,17 +215,17 @@ USAGE
 @CHANNELS=(1,2,3,4); $CHANNELS_DEFAULT=1;
 $AGI_TICK = 1000/60; # 16.6667ms
 $POLYMODE = 0;
-$DRUMNOTES = {
-  35 => { note => 16, length => 100  }, # bass drum
-  36 => { note => 16, length => 100 },  # bass drum 1
-  37 => { note => 14, length => 50 },   # side stick
-  38 => { note => 15, length => 100 },  # snare
-  39 => { note => 15, length => 150 },  # clap
-  40 => { note => 15, length => 100 },  # elec snare
-  41 => { note => 14, length => 100 },  # low tom
-  42 => { note => 14, length => 50 },  # hihat closed
-  999 => { note => 16, length => 50 },  # hihat closed
-};
+%DRUMNOTES = (
+  35 => { note => 16, length => 33  }, # bass drum
+  36 => { note => 16, length => 33 },  # bass drum 1
+  37 => { note => 14, length => 17 },   # side stick
+  38 => { note => 15, length => 33 },  # snare
+  39 => { note => 15, length => 50 },  # clap
+  40 => { note => 15, length => 33 },  # elec snare
+  41 => { note => 14, length => 33 },  # low tom
+  42 => { note => 14, length => 17 },  # hihat closed
+  999 => { note => 16, length => 33 },  # hihat closed
+);
 $IT_CMD_A_SPEED = 1;
 $IT_CMD_B_JUMP = 2;
 $IT_CMD_C_BREAK = 3;
@@ -241,6 +241,7 @@ $IT_CMD_T_TEMPO = 20;
 $IT_NOTE_OFF = 246;
 $IT_NOTE_CUT = 254;
 
+$ARPSPEED = 0.5; # default arpeggio speed
 
 while ($v = shift @ARGV) {
      if ($v eq "--debug-input") { $DEBUG_INPUT=1; }
@@ -252,6 +253,7 @@ while ($v = shift @ARGV) {
   elsif ($v eq "--instr-note")  { my $instr = shift @ARGV; my $note  = shift @ARGV; $INSTRNOTE [$instr]=$note; }
   elsif ($v eq "--instr-shift") { my $instr = shift @ARGV; my $shift = shift @ARGV; $INSTRSHIFT[$instr]=$shift; }
   elsif ($v eq "--instr-arp")   { my $instr = shift @ARGV; my $arp   = shift @ARGV; if ($arp =~ /^[0-9A-Fa-f]+$/) { $INSTRARP[$instr] = hex $arp; } else { die "Invalid value provided for --instr-arp.\n"; }}
+  elsif ($v eq "--arpspeed") { $ARPSPEED = 1 / int(shift @ARGV); }
   elsif ($v eq "--length")   { $MAXLENGTH = int(shift @ARGV); }
   elsif ($v eq "--midipoly") { $POLYMODE = 1; }
   elsif ($v eq "--nomidiremap") { $NOMIDIREMAP = 1; }
@@ -565,6 +567,8 @@ sub read_MID() {
   my $MIDICH_DRUM = 9; # default drum channel
 
   my $mididata = [];
+
+  print "Pass 1: Reading MIDI Data\n";
 
   do {
     read(INFILE,my $chunktype,4);
@@ -933,9 +937,9 @@ for (my $outchan=0; $outchan<$NUMCH; $outchan++) {
 }
 
 my $ticks_per_row=1;
-if ($FORMAT=="IT") {
+if ($IT_TEMPO) {
   my $rowdur_ms = (2500 / $IT_TEMPO) * $IT_SPEED; # 2500 is the default IT row duration in ms
-  printf "IT defines tempo %d speed %d, 'classic' tempo: 1 row = %.2f ms\n",$IT_TEMPO,$IT_SPEED,$rowdur_ms;
+  printf "Tempo %d speed %d, 'classic' tempo: 1 row = %.2f ms\n",$IT_TEMPO,$IT_SPEED,$rowdur_ms;
   $tempomode = $tempomode_override || "even";
   if ($tempomode eq "even") {
     # pull the row duration to be a multiple of AGI ticks
@@ -948,11 +952,11 @@ if ($FORMAT=="IT") {
 }
 
 $arows = $#pattern+1;
-print "Total rows: $arows\n";
 
 if ($MAXLENGTH) {
+  my $oldarows = $arows;
   $arows = min($arows,$MAXLENGTH); # limit the number of rows
-  print "Limiting to $arows rows\n";
+  print "Total rows $oldarows, limited to $arows.\n";
 }
 
 my $row_ticks = 0;
@@ -978,7 +982,7 @@ for (my $row=0; $row<=$arows; $row++) {
     undef $chan{param};
 
     # what's at this row in this channel? an old note still playing, or a new note?
-    for (my $m=0;$m<$row_ticks;$m++) { # mul>1 means we have to add more ticks to the last note
+    for (my $m=0;$m<$row_ticks;$m++) { # repeat for each AGI tick in this row
       if ($m>0) { print_dp "bonus row %d: ",$m; undef $note; } # no note, simulate empty row
       my %changed = ();
       
@@ -1027,16 +1031,38 @@ for (my $row=0; $row<=$arows; $row++) {
         # auto drum off
         $chan{note}=-1; $chan{vol}=0; $changed{note}=1; $changed{vol}=1; # drum off
         print_dp "drum off!\n";
-      } elsif ($chan{command}==$IT_CMD_J_ARP || $INSTRARP[$chan{instrument}]) {
-        my $arpphase = int($chan{arpphase})||0;
+
+      } elsif ($chan{command}==$IT_CMD_J_ARP || $INSTRARP[$chan{instrument}]) { # ARPEGGIO
+
+        my $arpphase = int($chan{arpphase}+0.01)||0; # fix rounding errors
         if ($changed{note}) { $arpphase = 0; } # reset arpeggio phase on note change
         my $arps = $chan{command}==$IT_CMD_J_ARP ? $chan{param} : $INSTRARP[$chan{instrument}];
         my @arpn = (0, $arps >> 4, $arps & 0x0F);
-        $chan{outnote} = $chan{note} + $arpn[$arpphase]; # leave the note unchanged, but add arpeggio
+        my $outnote = $chan{note} + $arpn[$arpphase]; # leave the note unchanged, but add arpeggio
         print_dp "arpeggio phase %d +%d = %d\n",$arpphase,$arpn[$arpphase],$chan{outnote};
-        $changed{note} = 1; # note changed
-        $chan{arpphase}+=0.5; if ($chan{arpphase}>3) { $chan{arpphase}-=3; }
+        if ($chan{outnote}!=$outnote) {
+          $chan{outnote}=$outnote; # note to output
+          $changed{note} = 1; # note changed
+        }
+        $chan{arpphase}+=$ARPSPEED; if ($chan{arpphase}>3) { $chan{arpphase}-=3; }
+      
+      } elsif ($chan{command}==$IT_CMD_H_VIB || $INSTRVIB[$chan{instrument}]) { # VIBRATO
+
+        my $VIBLENGTH = 64; my $VIBDEPTH = 1;
+
+        my $vibphase = int($chan{vibphase}+0.01)||0; # fix rounding errors
+        if ($changed{note}) { $vibphase = 0; } # reset vibrato phase on note change
+        my $vibs = $chan{command}==$IT_CMD_H_VIB ? $chan{param} : $INSTRVIB[$chan{instrument}];
+        my ($vibspeed,$vibdepth) = (($vibs >> 4) & 0x0F, $vibs & 0x0F);
+        my $outnote = $chan{note} + sin($vibphase / $VIBLENGTH * 2 * 3.14159) * ($vibdepth/15);
+        print_dp "vibrato phase %d depth %d speed %d outnote %d\n",$vibphase,$vibdepth,$vibspeed,$outnote;
+        if ($chan{outnote}!=$outnote) {
+          $chan{outnote}=$outnote; # note to output
+          $changed{note} = 1; # note changed
+        }
+        $chan{vibphase}+=$vibspeed; $chan{vibphase}%=$VIBLENGTH;
       }
+
       print_dp "changes: %s\n",join(",",map { "$_=$chan{$_}" } sort keys %changed);
 
       # no more changes, just output
@@ -1059,12 +1085,8 @@ for (my $row=0; $row<=$arows; $row++) {
   }
   $row_ticks -= int($row_ticks);
 }
-for (my $outchan=0; $outchan<$NUMCH; $outchan++) {
-  # trim last note if it was a pause
-  if ($notedata[$outchan][-1]{note} == -1) {
-    $notedata[$outchan][-1]{length}=1;
-  }
-}
+
+trim_trailing_rests();
 
 
 if (0) {
@@ -1185,11 +1207,11 @@ if ($DEBUG_PROC) {
 
 print "Pass 4: Converting to AGI data\n";
 
-for ($voice=0; $voice<$NUMCH; $voice++) {
+for (my $voice=0; $voice<$NUMCH; $voice++) {
   if ($DEBUG_AGI) { print("====================================================\n"); }
   printf " - Channel %d (%s), %d notes\n",$voice+1,$voice<=2&&"voice"||"noise",scalar(@{$notedata[$voice]});
   $prev_dur_frac=0;
-  for ($in=0; $in<scalar(@{$notedata[$voice]}); $in++) {
+  for (my $in=0; $in<scalar(@{$notedata[$voice]}); $in++) {
     $note=$notedata[$voice][$in]{note}; # if ($DEBUG_AGI) { printf("n:%6.2f  ",$note); }
     $length=$notedata[$voice][$in]{length};# if ($DEBUG_AGI) { printf("l:%3d  ",$length); } # length in ticks
     $vol=$notedata[$voice][$in]{vol}; if (!defined($vol) || $vol>63) { $vol=63; }
@@ -1223,8 +1245,8 @@ for ($voice=0; $voice<$NUMCH; $voice++) {
     
       # override drums
       if ($voice==3 && $FORMAT eq "MIDI" && !$NOMIDIREMAP) {
-        if ($DRUMNOTES[$note]) { $note = $DRUMNOTES[$note]{note}; }
-        else { $note = $DRUMNOTES[999]{note}; }
+        if ($DRUMNOTES{$note}) { $note = $DRUMNOTES{$note}->{note}; }
+        else { $note = $DRUMNOTES{999}->{note}; }
       }
 
       $out_noisetype = int($note/12)%2;
@@ -1249,7 +1271,7 @@ for ($voice=0; $voice<$NUMCH; $voice++) {
     
     if ($DEBUG_AGI) { printf("%4d: n=%d/%6.1fHz v=%3d  d=%3d  =  %02x %02x %02x %02x %02x\n",
      $in,
-     $note,$voice<=2 && $freq || $out_noisetype*10+$out_noisefreq,$vol,$out_duration,
+     $note, $voice<=2 && $freq || ($out_noisetype*10+$out_noisefreq), $vol, $out_duration,
      ord(substr($packet,0,1)),ord(substr($packet,1,1)),$out_fv,$out_fc,$out_att); }
   }
 }
@@ -1276,3 +1298,22 @@ print FILE "\xFF\xFF";
 
 close(FILE);
 print "Wrote file: $outfile\n";
+
+
+
+
+
+
+
+
+
+
+
+sub trim_trailing_rests {
+  for (my $outchan = 0; $outchan<$NUMCH; $outchan++) {
+    # trim last note if it was a pause
+    while ($notedata[$outchan][-1]{note} == -1) {
+      pop @{$notedata[$outchan]};
+    }
+  }
+}
