@@ -252,6 +252,7 @@ while ($v = shift @ARGV) {
   elsif ($v eq "--instr-note")  { my $instr = shift @ARGV; my $note  = shift @ARGV; $INSTRNOTE [$instr]=$note; }
   elsif ($v eq "--instr-shift") { my $instr = shift @ARGV; my $shift = shift @ARGV; $INSTRSHIFT[$instr]=$shift; }
   elsif ($v eq "--instr-arp")   { my $instr = shift @ARGV; my $arp   = shift @ARGV; if ($arp =~ /^[0-9A-Fa-f]+$/) { $INSTRARP[$instr] = hex $arp; } else { die "Invalid value provided for --instr-arp.\n"; }}
+  elsif ($v eq "--length")   { $MAXLENGTH = int(shift @ARGV); }
   elsif ($v eq "--midipoly") { $POLYMODE = 1; }
   elsif ($v eq "--nomidiremap") { $NOMIDIREMAP = 1; }
   else {
@@ -949,6 +950,11 @@ if ($FORMAT=="IT") {
 $arows = $#pattern+1;
 print "Total rows: $arows\n";
 
+if ($MAXLENGTH) {
+  $arows = min($arows,$MAXLENGTH); # limit the number of rows
+  print "Limiting to $arows rows\n";
+}
+
 my $row_ticks = 0;
 
 for (my $outchan=0; $outchan<$NUMCH; $outchan++) { $notedata[$outchan] = []; $chans[$outchan] = { }; } # no note playing
@@ -1022,14 +1028,14 @@ for (my $row=0; $row<=$arows; $row++) {
         $chan{note}=-1; $chan{vol}=0; $changed{note}=1; $changed{vol}=1; # drum off
         print_dp "drum off!\n";
       } elsif ($chan{command}==$IT_CMD_J_ARP || $INSTRARP[$chan{instrument}]) {
-        my $arpphase = $chan{arpphase}||0;
+        my $arpphase = int($chan{arpphase})||0;
         if ($changed{note}) { $arpphase = 0; } # reset arpeggio phase on note change
         my $arps = $chan{command}==$IT_CMD_J_ARP ? $chan{param} : $INSTRARP[$chan{instrument}];
         my @arpn = (0, $arps >> 4, $arps & 0x0F);
-        $chan{outnote} = $chan->{note} + $arpn[$arpphase]; # leave the note unchanged, but add arpeggio
-        print_dp "arpeggio phase %d = %d\n",$arpphase,$chan{outnote};
+        $chan{outnote} = $chan{note} + $arpn[$arpphase]; # leave the note unchanged, but add arpeggio
+        print_dp "arpeggio phase %d +%d = %d\n",$arpphase,$arpn[$arpphase],$chan{outnote};
         $changed{note} = 1; # note changed
-        $chan{arpphase}++; $chan{arpphase}%=3;
+        $chan{arpphase}+=0.5; if ($chan{arpphase}>3) { $chan{arpphase}-=3; }
       }
       print_dp "changes: %s\n",join(",",map { "$_=$chan{$_}" } sort keys %changed);
 
@@ -1054,9 +1060,9 @@ for (my $row=0; $row<=$arows; $row++) {
   $row_ticks -= int($row_ticks);
 }
 for (my $outchan=0; $outchan<$NUMCH; $outchan++) {
-  # remove last note if it was a pause
+  # trim last note if it was a pause
   if ($notedata[$outchan][-1]{note} == -1) {
-    pop @{$notedata[$outchan]};
+    $notedata[$outchan][-1]{length}=1;
   }
 }
 
