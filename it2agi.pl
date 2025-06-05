@@ -230,8 +230,8 @@ $IT_CMD_A_SPEED = 1;
 $IT_CMD_B_JUMP = 2;
 $IT_CMD_C_BREAK = 3;
 $IT_CMD_D_VOLSL = 4;
-$IT_CMD_E_PORTU = 5;
-$IT_CMD_F_PORTD = 6;
+$IT_CMD_E_PORTD = 5;
+$IT_CMD_F_PORTU = 6;
 $IT_CMD_G_PORT = 7;
 $IT_CMD_H_VIB = 8;
 $IT_CMD_I_TREMR = 9;
@@ -973,7 +973,6 @@ for (my $row=0; $row<=$arows; $row++) {
     if (!$note && $row==0) { # first row, no note
       $note = { note => -1, vol => 0 }; # no note playing
     }
-    print_dp "Row %d, channel %d from %d: ",$row+1,$outchan+1,$inchan+1;
 
     my %chan = %{$chans[$outchan]};
 
@@ -983,20 +982,25 @@ for (my $row=0; $row<=$arows; $row++) {
 
     # what's at this row in this channel? an old note still playing, or a new note?
     for (my $m=0;$m<$row_ticks;$m++) { # repeat for each AGI tick in this row
-      if ($m>0) { print_dp "bonus row %d: ",$m; undef $note; } # no note, simulate empty row
+      print_dp "%3s %4d%3s, channel %d from %d: ",($m==0?"Row":""),$row+1,$m>0?sprintf("+%2d",$m):"",$outchan+1,$inchan+1;
+      if ($m>0) {
+        undef $note; # no note, simulate empty row
+      }
       my %changed = ();
       
       if ($note) { # SOMETHING changes, not necessarily a new note
-        print_dp "NEW: ".join(" ",map { "$_=$note->{$_}" } sort keys %{$note})."\n";
+        print_dp "NEW: ".join(" ",map { "$_=$note->{$_}" } sort keys %{$note})."; ";
         # new note, start playing it
         if (defined $note->{note}) {
           my $n = $note->{note};
           if ($n==$IT_NOTE_CUT || $n==$IT_NOTE_OFF) { $n=-1; } # -1 means pause start
-          $chan{note}=$n; # note number
+          $chan{note}=$n; # base note
           $changed{note}=1;
         }
-        if ((defined $note->{volpan} && $note->{volpan}<=64) || defined $note->{note}) { # others may be panning
-          my $vol = defined $note->{volpan} ? $note->{volpan} : 64; # volume, default 64
+        if (defined $note->{volpan} || defined $note->{note}) { # others may be panning
+          my $vol = (defined $note->{volpan} && $note->{volpan}<=64) ? $note->{volpan} : 64; # volume, default 64
+          #if ($vol&0x60) { $vol=$chan{vol}-$vol&0x1F; }
+          #if ($vol&0x60) { $vol=$chan{vol}-$vol&0x1F; }
           if ($chan{note}==-1) { $vol = 0; } # no note, no volume
           #if ($chan{note}!=$vol) {
             $chan{vol} = $vol; # volume
@@ -1006,9 +1010,10 @@ for (my $row=0; $row<=$arows; $row++) {
         #if ($not>0 && $not<200 && !defined($vol)) { $vol=32; } # temp default volume?        
         
         if ($chan{note}==-1 && scalar(@{$notedata[$outchan]}) && $notedata[$outchan][-1]{note}==-1) {
-          # just continue the pause, likely a drum-off
+          # just continue the rest, likely a drum-off
+          undef $chan{note}; undef $chan{outnote};
           $notedata[$outchan][-1]{length}++;
-          $chans[$outchan]=$chan;
+          %{$chans[$outchan]} = %chan;
           next;
         }
 
@@ -1023,28 +1028,40 @@ for (my $row=0; $row<=$arows; $row++) {
         }
       }
 
-      print_dp "chan %d: %s",$outchan,join(" ",map { "$_=$chan{$_}" } sort keys %chan)."\n";
+      print_dp "[ %s ]; ",join(" ",map { "$_=$chan{$_}" } sort keys %chan);
 
       # now do effects, based on $chan
 
       if ($outchan==3 && $auto_drum_offs && scalar @{$notedata[$outchan]} && $notedata[$outchan][-1]{note}>0 && $notedata[$outchan][-1]{length}>=$auto_drum_offs) {
         # auto drum off
+        undef $chan{outnote};
         $chan{note}=-1; $chan{vol}=0; $changed{note}=1; $changed{vol}=1; # drum off
-        print_dp "drum off!\n";
+        print_dp "= drum off! ";
 
-      } elsif ($chan{command}==$IT_CMD_J_ARP || $INSTRARP[$chan{instrument}]) { # ARPEGGIO
+      } elsif ($chan{command}==$IT_CMD_D_VOLSL) {
+        # starts immediately, not "on next tick" per spec. Sorry!
+        my $vold = (($chan{param}>>4)&0x0F) - ($chan{param}&0x0F);
+        my $vol=$chan{vol}+=$vold; if ($vol>64) { $vol=64; } if ($vol<0) { $vol=0; }
+        print_dp "= vol slide %d = %d; ", $vold, $vol;
+        if ($vol!=$chan{vol}) {
+          $chan{vol}=$vol; # note to output
+          $changed{vol} = 1; # note changed
+        }
+      
+      } elsif (($chan{command}==$IT_CMD_E_PORTD || $chan{command}==$IT_CMD_F_PORTU || $chan{command}==$IT_CMD_G_PORT) && $chan{outnote}>0) { # portamento
 
-        my $arpphase = int($chan{arpphase}+0.01)||0; # fix rounding errors
-        if ($changed{note}) { $arpphase = 0; } # reset arpeggio phase on note change
-        my $arps = $chan{command}==$IT_CMD_J_ARP ? $chan{param} : $INSTRARP[$chan{instrument}];
-        my @arpn = (0, $arps >> 4, $arps & 0x0F);
-        my $outnote = $chan{note} + $arpn[$arpphase]; # leave the note unchanged, but add arpeggio
-        print_dp "arpeggio phase %d +%d = %d\n",$arpphase,$arpn[$arpphase],$chan{outnote};
-        if ($chan{outnote}!=$outnote) {
+        my $prev_outnote = $chan{outnote} || $chan{note}; # previous output note
+        my $p_up = $chan{command}==$IT_CMD_F_PORTU || ($chan{command}==$IT_CMD_G_PORT && $chan{note}>$prev_outnote);
+        my $p_to = $chan{command}==$IT_CMD_G_PORT;
+        my $portstep = $chan{param};
+        if (!$p_up) { $portstep=-$portstep; }
+        my $outnote = $prev_outnote + $portstep / 16; # output note is the same as input note
+        if ($p_to && (($p_up && $outnote>$chan{note}) || (!$p_up && $outnote<$chan{note}))) { $outnote=$chan{note}; }
+        print_dp "= portamento %s%s from %.1f %s%d/16 = %.1f; ", ($p_up?"up":"dn"),($p_to?" to $chan{note}":""),$prev_outnote,($portstep>=0?"+":"-"),abs($portstep), $outnote;
+        if ($outnote!=$prev_outnote) {
           $chan{outnote}=$outnote; # note to output
           $changed{note} = 1; # note changed
         }
-        $chan{arpphase}+=$ARPSPEED; if ($chan{arpphase}>3) { $chan{arpphase}-=3; }
       
       } elsif ($chan{command}==$IT_CMD_H_VIB || $INSTRVIB[$chan{instrument}]) { # VIBRATO
 
@@ -1055,15 +1072,38 @@ for (my $row=0; $row<=$arows; $row++) {
         my $vibs = $chan{command}==$IT_CMD_H_VIB ? $chan{param} : $INSTRVIB[$chan{instrument}];
         my ($vibspeed,$vibdepth) = (($vibs >> 4) & 0x0F, $vibs & 0x0F);
         my $outnote = $chan{note} + sin($vibphase / $VIBLENGTH * 2 * 3.14159) * ($vibdepth/15);
-        print_dp "vibrato phase %d depth %d speed %d outnote %d\n",$vibphase,$vibdepth,$vibspeed,$outnote;
+        print_dp "= vibrato on %.1f, depth=%d speed=%d phase=%d/%d = %.1f; ",$chan{note},$vibdepth,$vibspeed,$vibphase,$VIBLENGTH,$outnote;
         if ($chan{outnote}!=$outnote) {
           $chan{outnote}=$outnote; # note to output
           $changed{note} = 1; # note changed
         }
         $chan{vibphase}+=$vibspeed; $chan{vibphase}%=$VIBLENGTH;
+
+      } elsif ($chan{command}==$IT_CMD_J_ARP || $INSTRARP[$chan{instrument}]) { # ARPEGGIO
+
+        my $arpphase = int($chan{arpphase}+0.01)||0; # fix rounding errors
+        if ($changed{note}) { $arpphase = 0; } # reset arpeggio phase on note change
+        my $arps = $chan{command}==$IT_CMD_J_ARP ? $chan{param} : $INSTRARP[$chan{instrument}];
+        my @arpn = (0, $arps >> 4, $arps & 0x0F);
+        my $outnote = $chan{note} + $arpn[$arpphase]; # leave the note unchanged, but add arpeggio
+        print_dp "= arpeggio on %.1f, phase=%d +%d = %d; ",$chan{note},$arpphase,$arpn[$arpphase],$outnote;
+        if ($chan{outnote}!=$outnote) {
+          $chan{outnote}=$outnote; # note to output
+          $changed{note} = 1; # note changed
+        }
+        $chan{arpphase}+=$ARPSPEED; if ($chan{arpphase}>3) { $chan{arpphase}-=3; }
+      
+      } else { # play it straight
+
+        $chan{outnote} = $chan{note};
+        print_dp "= straight %.1f; ",$chan{outnote};
       }
 
-      print_dp "changes: %s\n",join(",",map { "$_=$chan{$_}" } sort keys %changed);
+      # clear some things
+      if ($chan{command}!=$IT_CMD_H_VIB && !$INSTRVIB[$chan{instrument}]) { undef $chan{vibphase}; }
+      if ($chan{command}!=$IT_CMD_J_ARP && !$INSTRARP[$chan{instrument}]) { undef $chan{arpphase}; }
+
+      print_dp "changed: %s; ",join(",",map { "$_=$chan{$_}" } sort keys %changed);
 
       # no more changes, just output
 
@@ -1073,13 +1113,12 @@ for (my $row=0; $row<=$arows; $row++) {
           note => $chan{outnote} || $chan{note},
           vol  => $chan{vol},
         });
-        print_dp "new %d\n",$notedata[$outchan][-1]{note};
+        print_dp "new %.1f\n",$notedata[$outchan][-1]{note};
       } else {
         $notedata[$outchan][-1]{length}++;
-        print_dp "old %d=%d\n",$notedata[$outchan][-1]{note},$notedata[$outchan][-1]{length};
+        print_dp "old %.1f=%d\n",$notedata[$outchan][-1]{note},$notedata[$outchan][-1]{length};
       }
       
-      undef $chan{outnote};
       %{$chans[$outchan]} = %chan;
     }
   }
@@ -1312,7 +1351,7 @@ print "Wrote file: $outfile\n";
 sub trim_trailing_rests {
   for (my $outchan = 0; $outchan<$NUMCH; $outchan++) {
     # trim last note if it was a pause
-    while ($notedata[$outchan][-1]{note} == -1) {
+    while (scalar(@{$notedata[$outchan]}) && $notedata[$outchan][-1]{note} == -1) {
       pop @{$notedata[$outchan]};
     }
   }
