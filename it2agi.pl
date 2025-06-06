@@ -265,7 +265,7 @@ while ($v = shift @ARGV) {
     my $data = shift @ARGV;
     if ($meta eq "arp") { $data=hex $data; }
     elsif ($meta eq "shift") { $data = 0+$data; }
-    $INSTRDATA[$instr-1]{$meta}=$data;
+    $INSTRDATA[$instr]{$meta}=$data;
   }
   elsif ($v eq "--arpspeed") { $ARPSPEED = 1 / int(shift @ARGV); }
   elsif ($v eq "--length")   { $MAXLENGTH = int(shift @ARGV); }
@@ -358,7 +358,7 @@ sub read_IT() {
     read(INFILE,my $name,26); $name = trim($name);
     
     # $INSTRDATA[$ins]{name}=$name;
-    parse_instr_name($ins,$name);
+    parse_instr_name($ins+1,$name);
   }
 
   $arow=0;
@@ -469,7 +469,7 @@ sub read_MOD() {
   for (my $sn=0;$sn<31;$sn++) {
     read(INFILE,my $sname,22); $sname = trim($sname);
     read(INFILE,$_,8); my ($slen,$stune,$svol,$reps,$repl) = unpack("SCCSS");
-    parse_instr_name($sn,$sname);
+    parse_instr_name($sn+1,$sname);
     # print_di "S%02d: %s\n",$sn,$sname;
   }
   read(INFILE,$_,1); $songlen=unpack("C");
@@ -507,7 +507,7 @@ sub read_MOD() {
         $command = $b3&0x0F;
         $args = $b4;
         if (!$instr && !$period && !$command) {
-          print_di "        ";
+          print_di "              ";
           next;
         }
         my $note;
@@ -525,7 +525,7 @@ sub read_MOD() {
         #if ($INSTRARP[$instr]) { $notedata->{instrarp}=$INSTRARP[$instr]; }
         $pattern[$arow+$row][$chan] = $notedata;
         
-        print_di "%02d %1X%02x  ",$periodtonote{$period},$command,$args
+        print_di "i%02d n%02d c%1X%02x  ",$instr,$periodtonote{$period},$command,$args
       }
       print_di "\n";
     }
@@ -691,7 +691,7 @@ sub read_MID() {
                 $last[$chan]{length} = $totalms-$last[$chan]{start};
               }
               push @{$mididata[$chan]}, $last[$chan];
-              undef $last[$chan];
+              delete $last[$chan];
               print_di "<<'";
             }
           }
@@ -880,10 +880,10 @@ if (0 && @pattern) {
 }
 
 
-for (my $ins=0;$ins<scalar(@INSTRDATA);$ins++) {
+for (my $ins=1;$ins<scalar(@INSTRDATA);$ins++) {
   # Print details of the current instrument
   next if (!keys %{$INSTRDATA[$ins]});
-  printf "Instrument %2d: [%-32s]",$ins+1,$INSTRDATA[$ins]{name};
+  printf "Instrument %2d: [%-32s]",$ins,$INSTRDATA[$ins]{name};
   if (defined $INSTRDATA[$ins]{noise}) { print "; Noise"; }
   if (defined $INSTRDATA[$ins]{buzz}) { print "; Buzz"; }
   if (defined $INSTRDATA[$ins]{shift}) { printf "; Shift %+.2f",$INSTRDATA[$ins]{shift}; }
@@ -999,7 +999,7 @@ for (my $row=0; $row<=$arows; $row++) {
         
         if ($chan{note}==-1 && scalar(@{$notedata[$outchan]}) && $notedata[$outchan][-1]{note}==-1) {
           # just continue the rest, likely a drum-off
-          undef $chan{note}; undef $chan{outnote};
+          delete $chan{note}; delete $chan{outnote};
           $notedata[$outchan][-1]{length}++;
           %{$chans[$outchan]} = %chan;
           next;
@@ -1022,7 +1022,7 @@ for (my $row=0; $row<=$arows; $row++) {
 
       if ($outchan==3 && $auto_drum_offs && scalar @{$notedata[$outchan]} && $notedata[$outchan][-1]{note}>0 && $notedata[$outchan][-1]{length}>=$auto_drum_offs) {
         # auto drum off
-        undef $chan{outnote};
+        delete $chan{outnote};
         $chan{note}=-1; $chan{vol}=0; $changed{note}=1; $changed{vol}=1; # drum off
         print_dp "= drum off! ";
 
@@ -1088,8 +1088,8 @@ for (my $row=0; $row<=$arows; $row++) {
       }
 
       # clear some things
-      if ($chan{command}!=$IT_CMD_H_VIB && !$INSTRDATA[$chan{instr}]{vib}) { undef $chan{vibphase}; }
-      if ($chan{command}!=$IT_CMD_J_ARP && !$INSTRDATA[$chan{instr}]{arp}) { undef $chan{arpphase}; }
+      if ($chan{command}!=$IT_CMD_H_VIB && !$INSTRDATA[$chan{instr}]{vib}) { delete $chan{vibphase}; }
+      if ($chan{command}!=$IT_CMD_J_ARP && !$INSTRDATA[$chan{instr}]{arp}) { delete $chan{arpphase}; }
 
       print_dp "changed: %s; ",join(",",map { "$_=$chan{$_}" } sort keys %changed);
 
@@ -1101,10 +1101,10 @@ for (my $row=0; $row<=$arows; $row++) {
           note => $chan{outnote} || $chan{note},
           vol  => $chan{vol},
         });
-        print_dp "new %.1f\n",$notedata[$outchan][-1]{note};
+        print_dp "new %.1f [%d:%d]\n",$notedata[$outchan][-1]{note},$outchan+1,scalar @{$notedata[$outchan]};
       } else {
         $notedata[$outchan][-1]{length}++;
-        print_dp "old %.1f=%d\n",$notedata[$outchan][-1]{note},$notedata[$outchan][-1]{length};
+        print_dp "old %.1f=%d [%d:%d]\n",$notedata[$outchan][-1]{note},$notedata[$outchan][-1]{length},$outchan+1,scalar @{$notedata[$outchan]};
       }
       
       %{$chans[$outchan]} = %chan;

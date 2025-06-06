@@ -12,13 +12,13 @@ call :RESULTS %ERRORLEVEL%
 del out_*.ags
 
 echo [47;30m MOD: INSTRNOTE,INSTRTP [0m
-perl ../it2agi.pl --instr-note 5 13 --instr-note 6 14  --instr-note 5 13 --instr-note 4 15 --instr-note 11 14 --arpspeed 2 --auto-drum-offs 1 --channels 2,3,4,1 cremona.mod out_cremona.ags
+perl ../it2agi.pl --instr 5 note 13 --instr 6 note 14 --instr 4 note 15 --instr 11 note 14 --arpspeed 2 --auto-drum-offs 1 --channels 2,3,4,1 cremona.mod out_cremona.ags
 fc /b out_cremona.ags expect-cremona-id-io-ado.ags >nul
 call :RESULTS %ERRORLEVEL%
 del out_*.ags
 
 echo [47;30m MOD: INSTRNOTE,INSTRTP,INSTRARP [0m
-perl ../it2agi.pl --length 500 --instr-note 5 13 --instr-note 6 14  --instr-note 5 13 --instr-note 4 15 --instr-note 11 14 --instr-arp 1 047 --instr-arp 2 037 --instr-arp 12 037 --instr-arp 13 047 --arpspeed 2 --auto-drum-offs 1 --channels 2,3,4,1 cremona.mod out_cremona.ags
+perl ../it2agi.pl --length 500 --instr 5 note 13 --instr 6 note 14 --instr 4 note 15 --instr 11 note 14 --instr 1 arp 047 --instr 2 arp 037 --instr 12 arp 037 --instr 13 arp 047 --arpspeed 2 --auto-drum-offs 1 --channels 2,3,4,1 cremona.mod out_cremona.ags
 fc /b out_cremona.ags expect-cremona-id-io-ado-arp.ags >nul
 call :RESULTS %ERRORLEVEL%
 del out_*.ags
