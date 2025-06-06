@@ -1115,22 +1115,6 @@ for (my $row=0; $row<=$arows; $row++) {
 
 trim_trailing_rests();
 
-
-if ($DEBUG_PROC) {
-  print "AFTER RESTS::\n";
-  for (my $outchan=0; $outchan<$NUMCH; $outchan++) {
-    printf "Channel %d:\n",$outchan+1;
-    for ($nn=0; $nn<scalar(@{$notedata[$outchan]}); $nn++) {
-      my $note=$notedata[$outchan][$nn];
-      printf "%3d. note %d vol %d",$nn,$note->{note},$note->{vol};
-      if ($note->{command}) {
-        printf ", cmd %d, param %02x",$note->{command},$note->{param};
-      }
-      printf "\n";
-    }
-  }
-}
-
 ###################################################################
 # Notes and rests are ready in $notedata
 
