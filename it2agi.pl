@@ -152,6 +152,7 @@ Version history:
         --instr-oct to --instr-shift; readme written; tests added
  0.3.0: proper MIDI support, with tempo changes cutting overlapped notes
  0.4.0: MIDI support has drummaps now
+ 0.5.0: --instr-* syntax changed, arpeggio, portamento, vibrato supported
  
 END
 ;
@@ -161,7 +162,7 @@ END
 
 if ($ARGV[0] eq "" || $ARGV[0] eq "-h" || $ARGV[0] eq "--help") {
   print <<"USAGE";
-IT2AGI version 0.4.0
+IT2AGI version 0.5.0
 (c) 1999-2000 Nat Budin - portions by Lance Ewing
 Fixes 2025 by Adam 'Sinus' Skawinski
 
@@ -188,7 +189,7 @@ Options:
     converting input files that use short samples and
     don't bother terminating them, which would turn into
     long noise notes in AGI.
-  --instr-note x y - force instrument x to play only note
+  --instr x note y - force instrument x to play only note
     y. Useful to force a drum-like instrument to play
     only valid AGI drum notes. Typical notes are 13 (high
     noise), 14 (middle noise) and 15 (low noise).
@@ -197,11 +198,19 @@ Options:
     make output drums shorter, this option can turn a
     typical "rhythm channel" in the input into proper
     noise channel output for AGI.
-  --instr-shift x y - shift (transpose) instrument x by y
+  --instr x shift y - shift (transpose) instrument x by y
     semitones. Use when input samples were recorded in a
     weird pitch, and notes in the input were written to
     match that. Or, use +12 or -12 to transpose by an
     octave.
+  --instr x arp 047 - make instrument x magically generate
+    arpeggio 0-4-7 (on ticks defined by --arpspeed)
+  --instr x noise 1 - make instrument x magically insert
+    "pitch borrowing" noise notes into the 4th channel
+  --instr x buzz 1 - make instrument x magically insert
+    "pitch borrowing" buzz notes into the 4th channel
+  --arpspeed - set magic arpeggio speed (default: 1)
+
   --debug-input, --debug-proc, --debug-agi - verbose printout for debugging purposes.
   
 Output file is created in the same directory as the input file, with the .AGS extension.
@@ -250,9 +259,14 @@ while ($v = shift @ARGV) {
   elsif ($v eq "--channels") { @CHANNELS = split(",",shift @ARGV); $CHANNELS_DEFAULT=0; }
   elsif ($v eq "--tempo-exact") { $tempomode_override="exact"; }
   elsif ($v eq "--auto-drum-offs") { $auto_drum_offs = shift @ARGV; }
-  elsif ($v eq "--instr-note")  { my $instr = shift @ARGV; my $note  = shift @ARGV; $INSTRNOTE [$instr]=$note; }
-  elsif ($v eq "--instr-shift") { my $instr = shift @ARGV; my $shift = shift @ARGV; $INSTRSHIFT[$instr]=$shift; }
-  elsif ($v eq "--instr-arp")   { my $instr = shift @ARGV; my $arp   = shift @ARGV; if ($arp =~ /^[0-9A-Fa-f]+$/) { $INSTRARP[$instr] = hex $arp; } else { die "Invalid value provided for --instr-arp.\n"; }}
+  elsif ($v eq "--instr")  {
+    my $instr = shift @ARGV;
+    my $meta = shift @ARGV;
+    my $data = shift @ARGV;
+    if ($meta eq "arp") { $data=hex $data; }
+    elsif ($meta eq "shift") { $data = 0+$data; }
+    $INSTRDATA[$instr-1]{$meta}=$data;
+  }
   elsif ($v eq "--arpspeed") { $ARPSPEED = 1 / int(shift @ARGV); }
   elsif ($v eq "--length")   { $MAXLENGTH = int(shift @ARGV); }
   elsif ($v eq "--midipoly") { $POLYMODE = 1; }
@@ -308,40 +322,44 @@ sub its_IT() {
 }
 sub read_IT() {
   $FORMAT="IT";
-  seek(INFILE,4,0);
-  read(INFILE,$songname,26);
+  seek(INFILE,4,0); # IMPM
+  read(INFILE,$songname,26); $songname = trim($songname);
   print "Reading module '$songname' from $infile\n";
 
-  read(INFILE,$buf,2);
-  read(INFILE,$buf,15);
-  ($ordnum, $insnum, $smpnum, $patnum,
-  $cwtv,   $cmwt,   $flags) = unpack("S6b8",$buf);
-  read(INFILE,$buf,1);
-  $special=unpack("b8",$buf);
-
-  ($stereo, $mixopt, $useins, $linear, $oldfx,  $linkfx, $usemid, $reqmid)
-        = split("",$flags);
-  ($incmsg, $dum1,   $dum2,   $midcfg, $dum3,   $dum4,   $dum5,   $dum6)
+  read(INFILE,$_,2); # rows/beat, rows/meas
+  read(INFILE,$_,16);
+  ($ordnum, $insnum, $smpnum, $patnum, $cwtv, $cmwt, $flags, $special) = unpack("S6b16b16");
+  my ($stereo, $mixopt, $useins, $linear, $oldfx, $compatgxx, $midipitch, $reqmid, $extfilter)
+        = split("",$flags,9);
+  my ($incmsg, $dum1,   $dum2,   $midcfg, $dum3,   $dum4,   $dum5,   $dum6)
         = split("",$special);
 
-  read(INFILE,$buf,16);
-  ($gv, $mv, $IT_SPEED, $IT_TEMPO, $sep, $pwd, $msglgth, $msgoffset, $dum1)
-        = unpack("C6SI2",$buf);
+  read(INFILE,$_,6);  ($gv, $mv, $IT_SPEED, $IT_TEMPO, $sep, $pwd) = unpack("C6");
+  read(INFILE,$_,10); ($msglgth, $msgoffset, $dum1) = unpack("SI2"); # dum1=="OMPT" :D
 
-  read(INFILE,$buf,64);
-  @chnlpan=unpack("C64",$buf);
+  read(INFILE,$_,64); @chnlpan=unpack("C64");
+  read(INFILE,$_,64); @chnlvol=unpack("C64",$buf);
 
-  read(INFILE,$buf,64);
-  @chnlvol=unpack("C64",$buf);
+  # end of header
 
-  read(INFILE,$buf,$ordnum);
-  @orders=unpack("C$ordnum",$buf);
+  read(INFILE,$_,$ordnum); @orders=unpack("C$ordnum");
 
-  read(INFILE,$buf,$insnum*4+$smpnum*4);
-  read(INFILE,$buf,$patnum*4);
-  @patoff=unpack("I$patnum",$buf);
+  read(INFILE,$_,$insnum*4); @insoff=unpack("I$insnum");
+  read(INFILE,$_,$smpnum*4); @smpoff=unpack("I$insnum");
+  read(INFILE,$_,$patnum*4); @patoff=unpack("I$patnum");
 
   print "Pass 1: Reading IT Data\n";
+
+  for (my $ins=0;$ins<$insnum;$ins++) {
+    seek(INFILE,$insoff[$ins],0);
+    read(INFILE,$_,4); # IMPI
+    read(INFILE,$_,13); # filename
+    read(INFILE,$_,15); # flags, stuff
+    read(INFILE,my $name,26); $name = trim($name);
+    
+    # $INSTRDATA[$ins]{name}=$name;
+    parse_instr_name($ins,$name);
+  }
 
   $arow=0;
   $arows=0;
@@ -386,7 +404,7 @@ sub read_IT() {
         # print_di($arow.": WTF? ch".$channel." n prev\n");
       }
       if ($mvar & 32) {
-        $pattern[$arow][$channel]{instrument} = $lastval[$channel]{instrument};
+        $pattern[$arow][$channel]{instr} = $lastval[$channel]{instr};
       }
       if ($mvar & 64) {
         $pattern[$arow][$channel]{volpan} = $lastval[$channel]{volpan};
@@ -404,7 +422,7 @@ sub read_IT() {
       }
       if ($mvar & 2) {
         read(INFILE,$buf,1);
-        $lastval[$channel]{instrument} = $pattern[$arow][$channel]{instrument} = unpack("C",$buf);
+        $lastval[$channel]{instr} = $pattern[$arow][$channel]{instr} = unpack("C",$buf);
         #print_di(sprintf("0x%X", tell(INFILE)-1)." = ".$arow.": ch".$channel." i ".unpack("C",$buf)."\n");
       }
       if ($mvar & 4) {
@@ -421,14 +439,14 @@ sub read_IT() {
         #print_di(sprintf("0x%X", tell(INFILE)-1)." = ".$arow.": ch".$channel." cp ".unpack("CC",$buf)."\n");
       }
 
-      if ($pattern[$arow][$channel]{note}>0 && $INSTRSHIFT[$pattern[$arow][$channel]{instrument}])  { $lastval[$channel]{note} = $pattern[$arow][$channel]{note} = $pattern[$arow][$channel]{note} + $INSTRSHIFT[$pattern[$arow][$channel]{instrument}]; }
+      if ($pattern[$arow][$channel]{note}>0 && $INSTRDATA[$pattern[$arow][$channel]{instr}]{shift})  { $lastval[$channel]{note} = $pattern[$arow][$channel]{note} = $pattern[$arow][$channel]{note} + $INSTR[$pattern[$arow][$channel]{instr}]{shift}; }
 
       print_di "0x%X = %s ch%d: n=%d i=%d v=%d c=%d p=%d\n",
         tell(INFILE)-1,
         $mvar&1 ? "note" : "",
         $channel,
         $pattern[$arow][$channel]{note} || 0,
-        $pattern[$arow][$channel]{instrument} || 0,
+        $pattern[$arow][$channel]{instr} || 0,
         $pattern[$arow][$channel]{volpan} || 0,
         $pattern[$arow][$channel]{command} || 0,
         $pattern[$arow][$channel]{param} || 0;
@@ -449,13 +467,10 @@ sub read_MOD() {
   print("Pass 1. Reading Protracker module '$title'...\n");
   # samples, ignore
   for (my $sn=0;$sn<31;$sn++) {
-    read(INFILE,my $sname,22);
-    read(INFILE,my $slen,2);
-    read(INFILE,my $stune,1);
-    read(INFILE,my $svol,1);
-    read(INFILE,my $reps,2);
-    read(INFILE,my $repl,2);
-    print_di "S%02d: %s\n",$sn,$sname;
+    read(INFILE,my $sname,22); $sname = trim($sname);
+    read(INFILE,$_,8); my ($slen,$stune,$svol,$reps,$repl) = unpack("SCCSS");
+    parse_instr_name($sn,$sname);
+    # print_di "S%02d: %s\n",$sn,$sname;
   }
   read(INFILE,$_,1); $songlen=unpack("C");
   read(INFILE,$_,1);
@@ -487,11 +502,11 @@ sub read_MOD() {
       print_di "%02d = ",$row;
       for (my $chan=0;$chan<$modchannels;$chan++) {
         read(INFILE,$_,4); my ($b1,$b2,$b3,$b4) = unpack("CCCC");
-        $samplenum = ($b1&0xF0) | ($b3>>4);
+        $instr = ($b1&0xF0) | ($b3>>4);
         $period = (($b1&0x0F)<<8) | $b2;
         $command = $b3&0x0F;
         $args = $b4;
-        if (!$samplenum && !$period && !$command) {
+        if (!$instr && !$period && !$command) {
           print_di "        ";
           next;
         }
@@ -499,15 +514,15 @@ sub read_MOD() {
         my $notedata = {};
         if ($period) {
           $note = $periodtonote{$period} || -1;
-          if ($note>0 && $INSTRSHIFT[$samplenum])  { $note+=$INSTRSHIFT[$samplenum]; }
-          if ($note>0 && $INSTRNOTE[$samplenum]) { $note=$INSTRNOTE[$samplenum]; }
+          if ($note>0 && $INSTRDATA[$instr]{shift})  { $note+=$INSTRDATA[$instr]{shift}; }
+          if ($note>0 && $INSTRDATA[$instr]{note}) { $note=$INSTRDATA[$instr]{note}; }
           $notedata->{note} = $note;
-          $notedata->{instrument} = $samplenum;
+          $notedata->{instr} = $instr;
           $notedata->{volpan} = 64; # default volume
         }
 
         if ($command==0x0C) { $notedata->{volpan}=$args; }
-        #if ($INSTRARP[$samplenum]) { $notedata->{instrarp}=$INSTRARP[$samplenum]; }
+        #if ($INSTRARP[$instr]) { $notedata->{instrarp}=$INSTRARP[$instr]; }
         $pattern[$arow+$row][$chan] = $notedata;
         
         print_di "%02d %1X%02x  ",$periodtonote{$period},$command,$args
@@ -800,7 +815,6 @@ sub read_vlq {
 # NOT NEEDED when working with a MIDI file.
 
 
-
 if (0 && @pattern) {
   $tunedata=[];
 
@@ -863,6 +877,20 @@ if (0 && @pattern) {
     }
   }
 
+}
+
+
+for (my $ins=0;$ins<scalar(@INSTRDATA);$ins++) {
+  # Print details of the current instrument
+  next if (!keys %{$INSTRDATA[$ins]});
+  printf "Instrument %2d: [%-32s]",$ins+1,$INSTRDATA[$ins]{name};
+  if (defined $INSTRDATA[$ins]{noise}) { print "; Noise"; }
+  if (defined $INSTRDATA[$ins]{buzz}) { print "; Buzz"; }
+  if (defined $INSTRDATA[$ins]{shift}) { printf "; Shift %+.2f",$INSTRDATA[$ins]{shift}; }
+  if (defined $INSTRDATA[$ins]{note}) { printf "; One-note %d",$INSTRDATA[$ins]{note}; }
+  if (defined $INSTRDATA[$ins]{arp}) { printf "; Arpeggio %03x",$INSTRDATA[$ins]{arp}; }
+  if (defined $INSTRDATA[$ins]{vib}) { printf "; Vibrato %03x",$INSTRDATA[$ins]{vib}; }
+  print "\n";
 }
 
 if ($DEBUG_PROC) {
@@ -977,7 +1005,7 @@ for (my $row=0; $row<=$arows; $row++) {
           next;
         }
 
-        if (defined $note->{instrument}) { $chan{instrument} = $note->{instrument}; } # instrument number - unused in AGI, may be looked up, doesn't need to $changed
+        if (defined $note->{instr}) { $chan{instr} = $note->{instr}; } # instrument number - unused in AGI, may be looked up, doesn't need to $changed
         if (defined $note->{command}) {
           $chan{command} = $note->{command};
           $changed{command} = 1; # command : may not change
@@ -1017,19 +1045,19 @@ for (my $row=0; $row<=$arows; $row++) {
         if (!$p_up) { $portstep=-$portstep; }
         my $outnote = $prev_outnote + $portstep / 16; # output note is the same as input note
         if ($p_to && (($p_up && $outnote>$chan{note}) || (!$p_up && $outnote<$chan{note}))) { $outnote=$chan{note}; }
-        print_dp "= portamento %s%s from %.1f %s%d/16 = %.1f; ", ($p_up?"up":"dn"),($p_to?" to $chan{note}":""),$prev_outnote,($portstep>=0?"+":"-"),abs($portstep), $outnote;
+        print_dp "= portamento %s%s from %.1f %+d/16 = %.1f; ", ($p_up?"up":"dn"),($p_to?" to $chan{note}":""),$prev_outnote,$portstep, $outnote;
         if ($outnote!=$prev_outnote) {
           $chan{outnote}=$outnote; # note to output
           $changed{note} = 1; # note changed
         }
       
-      } elsif ($chan{command}==$IT_CMD_H_VIB || $INSTRVIB[$chan{instrument}]) { # VIBRATO
+      } elsif ($chan{command}==$IT_CMD_H_VIB || $INSTRDATA[$chan{instr}]{vib}) { # VIBRATO
 
         my $VIBLENGTH = 64; my $VIBDEPTH = 1;
 
         my $vibphase = int($chan{vibphase}+0.01)||0; # fix rounding errors
         if ($changed{note}) { $vibphase = 0; } # reset vibrato phase on note change
-        my $vibs = $chan{command}==$IT_CMD_H_VIB ? $chan{param} : $INSTRVIB[$chan{instrument}];
+        my $vibs = $chan{command}==$IT_CMD_H_VIB ? $chan{param} : $INSTRDATA[$chan{instr}]{vib};
         my ($vibspeed,$vibdepth) = (($vibs >> 4) & 0x0F, $vibs & 0x0F);
         my $outnote = $chan{note} + sin($vibphase / $VIBLENGTH * 2 * 3.14159) * ($vibdepth/15);
         print_dp "= vibrato on %.1f, depth=%d speed=%d phase=%d/%d = %.1f; ",$chan{note},$vibdepth,$vibspeed,$vibphase,$VIBLENGTH,$outnote;
@@ -1039,11 +1067,11 @@ for (my $row=0; $row<=$arows; $row++) {
         }
         $chan{vibphase}+=$vibspeed; $chan{vibphase}%=$VIBLENGTH;
 
-      } elsif ($chan{command}==$IT_CMD_J_ARP || $INSTRARP[$chan{instrument}]) { # ARPEGGIO
+      } elsif ($chan{command}==$IT_CMD_J_ARP || $INSTRDATA[$chan{instr}]{arp}) { # ARPEGGIO
 
         my $arpphase = int($chan{arpphase}+0.01)||0; # fix rounding errors
         if ($changed{note}) { $arpphase = 0; } # reset arpeggio phase on note change
-        my $arps = $chan{command}==$IT_CMD_J_ARP ? $chan{param} : $INSTRARP[$chan{instrument}];
+        my $arps = $chan{command}==$IT_CMD_J_ARP ? $chan{param} : $INSTRDATA[$chan{instr}]{arp};
         my @arpn = (0, $arps >> 4, $arps & 0x0F);
         my $outnote = $chan{note} + $arpn[$arpphase]; # leave the note unchanged, but add arpeggio
         print_dp "= arpeggio on %.1f, phase=%d +%d = %d; ",$chan{note},$arpphase,$arpn[$arpphase],$outnote;
@@ -1060,8 +1088,8 @@ for (my $row=0; $row<=$arows; $row++) {
       }
 
       # clear some things
-      if ($chan{command}!=$IT_CMD_H_VIB && !$INSTRVIB[$chan{instrument}]) { undef $chan{vibphase}; }
-      if ($chan{command}!=$IT_CMD_J_ARP && !$INSTRARP[$chan{instrument}]) { undef $chan{arpphase}; }
+      if ($chan{command}!=$IT_CMD_H_VIB && !$INSTRDATA[$chan{instr}]{vib}) { undef $chan{vibphase}; }
+      if ($chan{command}!=$IT_CMD_J_ARP && !$INSTRDATA[$chan{instr}]{arp}) { undef $chan{arpphase}; }
 
       print_dp "changed: %s; ",join(",",map { "$_=$chan{$_}" } sort keys %changed);
 
@@ -1209,6 +1237,23 @@ print "Wrote file: $outfile\n";
 
 
 
+sub parse_instr_name {
+  $ins = shift @_;
+  $name = shift @_;
+
+  if ($name =~ /\[(.+?)\]/) {
+    my $agiflag = $1; # Captures the string inside [AGI:...]
+    if ($agiflag =~ /SHIFT([+-]\d+)/) {
+      $INSTRDATA[$ins]{shift}=0+$1;
+    } elsif ($agiflag eq "NOISE") {
+      $INSTRDATA[$ins]{noise}=1;
+    } elsif ($agiflag eq "BUZZ") {
+      $INSTRDATA[$ins]{buzz}=1;
+    }
+  }
+  $INSTRDATA[$ins]{name}=$name;
+}
+
 
 sub trim_trailing_rests {
   for (my $outchan = 0; $outchan<$NUMCH; $outchan++) {
@@ -1217,4 +1262,8 @@ sub trim_trailing_rests {
       pop @{$notedata[$outchan]};
     }
   }
+}
+
+sub trim {
+   return $_[0] =~ s/\A\s+|\s*\c@*\z//urg;
 }
