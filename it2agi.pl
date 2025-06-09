@@ -904,12 +904,12 @@ for (my $ins=1;$ins<scalar(@INSTRDATA);$ins++) {
 # process magic drums
 for (my $row=0; $row<=$arows; $row++) {
   my $note = $pattern[$row][2];
-  if ($note->{note} && $note->{instr} && ($INSTRDATA[$note->{instr}]{noise} || $INSTRDATA[$note->{instr}]{buzz})) {
+  if ($note->{note} && $note->{note}<120 && $note->{instr} && ($INSTRDATA[$note->{instr}]{noise} || $INSTRDATA[$note->{instr}]{buzz})) {
     my $magic = $INSTRDATA[$note->{instr}]{noise} ? 15 : 3;
     $pattern[$row][3]={note=>$magic,volpan=>$note->{volpan},magic=>1};
     $note->{magicsource}=1;
     $note->{volpan}=0;
-  } elsif ($note->{note}==$IT_NOTE_CUT || $note->{note}==$IT_NOTE_OFF && $row>0 && $pattern[$row-1][3]->{magic}) {
+  } elsif (($note->{note}==$IT_NOTE_CUT || $note->{note}==$IT_NOTE_OFF) && $row>0 && $pattern[$row-1][3]->{magic}) {
     $pattern[$row][3]={note=>$IT_NOTE_CUT,volpan=>0,magic=>1};
   }
 }
@@ -1223,9 +1223,9 @@ for (my $voice=0; $voice<$NUMCH; $voice++) {
     $packet = pack("SCCC",$out_duration,$out_fv,$out_fc,$out_att);
     $snddata[$voice] = $snddata[$voice].$packet;
     
-    if ($DEBUG_AGI) { printf("%4d: n=%d/%6.1fHz v=%3d  d=%3d  =  %02x %02x %02x %02x %02x\n",
+    if ($DEBUG_AGI) { printf("%4d: n=%2d/%s v=%3d  d=%3d  =  %02x %02x %02x %02x %02x\n",
      $in,
-     $note, $voice<=2 && $freq || ($out_noisetype*10+$out_noisefreq), $vol, $out_duration,
+     $note, $voice<=2 && sprintf("%6.1fHz",$freq) || ($note==-1?"------- ":sprintf("%4s,%2s ",qw(buzz hiss)[$out_noisetype],qw(hi md lo c2)[$out_noisefreq])), $vol, $out_duration,
      ord(substr($packet,0,1)),ord(substr($packet,1,1)),$out_fv,$out_fc,$out_att); }
   }
 }
