@@ -155,6 +155,7 @@ Version history:
  0.3.0: proper MIDI support, with tempo changes cutting overlapped notes
  0.4.0: MIDI support has drummaps now
  0.5.0: --instr-* syntax changed, arpeggio, portamento, vibrato supported
+        magic buzz,noise instruments
  
 END
 ;
@@ -207,10 +208,12 @@ Options:
     octave.
   --instr x arp 047 - make instrument x magically generate
     arpeggio 0-4-7 (on ticks defined by --arpspeed)
-  --instr x noise 1 - make instrument x magically insert
-    "pitch borrowing" noise notes into the 4th channel
-  --instr x buzz 1 - make instrument x magically insert
-    "pitch borrowing" buzz notes into the 4th channel
+  --instr x noise 1 - make instrument x on channel 3
+    magically insert "pitch borrowing" noise notes
+    into the 4th (noise) channel
+  --instr x buzz 1 - make instrument x on channel 3
+    magically insert "pitch borrowing" buzz notes
+    into the 4th (noise) channel
   --arpspeed - set magic arpeggio speed (default: 1)
 
   --debug-input, --debug-proc, --debug-agi - verbose printout for debugging purposes.
@@ -222,10 +225,6 @@ USAGE
 ;
   exit(1);
 }
-
-# NOTE TO SELF
-# magic: noise sounds good in range c6-c9
-#        norm f4 = buzz c7 = +31
 
 
 @CHANNELS=(1,2,3,4); $CHANNELS_DEFAULT=1;
