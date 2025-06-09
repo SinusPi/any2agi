@@ -111,7 +111,9 @@ Options:
 
  5) If you're writing an IT file from scratch, set tempo to 150
     and speed to 1. This will give you a perfect match for the
-    AGI engine's 60 ticks per second, and 16.67 ms per tick.
+    AGI engine's 60 ticks per second, and 16.67 ms per tick. If that's too
+    fast for your editing comfort, set speed to 2-10, but don't touch
+    the tempo.
 
  Oh, and one more: have fun.
 
@@ -220,6 +222,11 @@ USAGE
 ;
   exit(1);
 }
+
+# NOTE TO SELF
+# magic: noise sounds good in range c6-c9
+#        norm f4 = buzz c7 = +31
+
 
 @CHANNELS=(1,2,3,4); $CHANNELS_DEFAULT=1;
 $AGI_TICK = 1000/60; # 16.6667ms
@@ -439,7 +446,7 @@ sub read_IT() {
         #print_di(sprintf("0x%X", tell(INFILE)-1)." = ".$arow.": ch".$channel." cp ".unpack("CC",$buf)."\n");
       }
 
-      if ($pattern[$arow][$channel]{note}>0 && $INSTRDATA[$pattern[$arow][$channel]{instr}]{shift})  { $lastval[$channel]{note} = $pattern[$arow][$channel]{note} = $pattern[$arow][$channel]{note} + $INSTR[$pattern[$arow][$channel]{instr}]{shift}; }
+      if ($pattern[$arow][$channel]{note}>0 && $INSTRDATA[$pattern[$arow][$channel]{instr}]{shift})  { $lastval[$channel]{note} = $pattern[$arow][$channel]{note} = $pattern[$arow][$channel]{note} + $INSTRDATA[$pattern[$arow][$channel]{instr}]{shift}; }
 
       print_di "0x%X = %s ch%d: n=%d i=%d v=%d c=%d p=%d\n",
         tell(INFILE)-1,
@@ -893,13 +900,36 @@ for (my $ins=1;$ins<scalar(@INSTRDATA);$ins++) {
   print "\n";
 }
 
+
+# process magic drums
+for (my $row=0; $row<=$arows; $row++) {
+  my $note = $pattern[$row][2];
+  if ($note->{note} && $note->{instr} && ($INSTRDATA[$note->{instr}]{noise} || $INSTRDATA[$note->{instr}]{buzz})) {
+    my $magic = $INSTRDATA[$note->{instr}]{noise} ? 15 : 3;
+    $pattern[$row][3]={note=>$magic,volpan=>$note->{volpan},magic=>1};
+    $note->{magicsource}=1;
+    $note->{volpan}=0;
+  } elsif ($note->{note}==$IT_NOTE_CUT || $note->{note}==$IT_NOTE_OFF && $row>0 && $pattern[$row-1][3]->{magic}) {
+    $pattern[$row][3]={note=>$IT_NOTE_CUT,volpan=>0,magic=>1};
+  }
+}
+for (my $row=$arows-1; $row>=1; $row--) {
+  my $pnote = $pattern[$row-1][3];
+  my $note = $pattern[$row][3];
+  if ($note->{magic} && $pnote->{magic} && $note->{note}==$pnote->{note} && $note->{volpan}==$pnote->{volpan}) {
+    undef $pattern[$row][3];
+  }
+}
+
+
+
 if ($DEBUG_PROC) {
   print "PROCESSING PATTERN:\n";
   # print numbers of channels in $CHANNELS in one line
   print "      "; print join("  |  ", map { sprintf "  Channel %2d  ", $_ } @CHANNELS); print "\n";
 
   for ($row=0; $row<scalar(@pattern); $row++) {
-    printf "%4d. ",$row;
+    printf "%4d. ",$row+1;
     for (my $outchan=0; $outchan<$NUMCH; $outchan++) {
       my $inchan = $CHANNELS[$outchan]-1;
       my $note=$pattern[$row][$inchan];
@@ -920,9 +950,6 @@ sub min ($$) { $_[$_[0] > $_[1]] }
 
 print "Pass 3: Rendering rests and effects\n";
 $notedata = [];
-for (my $outchan=0; $outchan<$NUMCH; $outchan++) {
-  $lastnote[$outchan] = { note => -1, length => 0, vol => 0 }; # no note playing
-}
 
 my $ticks_per_row=1;
 if ($IT_TEMPO) {
@@ -947,14 +974,17 @@ if ($MAXLENGTH) {
   print "Total rows $oldarows, limited to $arows.\n";
 }
 
+
 my $row_ticks = 0;
 
 for (my $outchan=0; $outchan<$NUMCH; $outchan++) { $notedata[$outchan] = []; $chans[$outchan] = { }; } # no note playing
 
+ROW:
 for (my $row=0; $row<=$arows; $row++) {
 
   $row_ticks += $ticks_per_row; # how many AGI ticks in this row?
 
+  CHAN:
   for (my $outchan=0; $outchan<$NUMCH; $outchan++) {
     my $inchan = $CHANNELS[$outchan]-1;
     my $note = $pattern[$row][$inchan];
@@ -975,6 +1005,8 @@ for (my $row=0; $row<=$arows; $row++) {
         undef $note; # no note, simulate empty row
       }
       my %changed = ();
+
+      if ($chan{overridden}) { undef $note; delete $chan{overridden}; next ROW; }
       
       if ($note) { # SOMETHING changes, not necessarily a new note
         print_dp "NEW: ".join(" ",map { "$_=$note->{$_}" } sort keys %{$note})."; ";
@@ -983,6 +1015,7 @@ for (my $row=0; $row<=$arows; $row++) {
           my $n = $note->{note};
           if ($n==$IT_NOTE_CUT || $n==$IT_NOTE_OFF) { $n=-1; } # -1 means pause start
           $chan{note}=$n; # base note
+          delete $chan{outnote};
           $changed{note}=1;
         }
         if (defined $note->{volpan} || defined $note->{note}) { # others may be panning
@@ -1029,7 +1062,7 @@ for (my $row=0; $row<=$arows; $row++) {
       } elsif ($chan{command}==$IT_CMD_D_VOLSL) {
         # starts immediately, not "on next tick" per spec. Sorry!
         my $vold = (($chan{param}>>4)&0x0F) - ($chan{param}&0x0F);
-        my $vol=$chan{vol}+=$vold; if ($vol>64) { $vol=64; } if ($vol<0) { $vol=0; }
+        my $vol = $chan{vol}+$vold; if ($vol>64) { $vol=64; } if ($vol<0) { $vol=0; }
         print_dp "= vol slide %d = %d; ", $vold, $vol;
         if ($vol!=$chan{vol}) {
           $chan{vol}=$vol; # note to output
@@ -1080,13 +1113,18 @@ for (my $row=0; $row<=$arows; $row++) {
           $changed{note} = 1; # note changed
         }
         $chan{arpphase}+=$ARPSPEED; if ($chan{arpphase}>3) { $chan{arpphase}-=3; }
+
+      } elsif ($m==0 && $outchan==2 && ($chan{note} || $chan{outnote}) && $INSTRDATA[$chan{instr}]{buzz}) {
+        $chans[3]{note} = 13; $chans[3]{override_note}=1;
+        print_dp "= BUZZ override note=4 on channel 3; ";
+        $chan{vol}=0; $changed{vol}=1;
       
       } else { # play it straight
 
         $chan{outnote} = $chan{note};
         print_dp "= straight %.1f; ",$chan{outnote};
       }
-
+      
       # clear some things
       if ($chan{command}!=$IT_CMD_H_VIB && !$INSTRDATA[$chan{instr}]{vib}) { delete $chan{vibphase}; }
       if ($chan{command}!=$IT_CMD_J_ARP && !$INSTRDATA[$chan{instr}]{arp}) { delete $chan{arpphase}; }
@@ -1100,6 +1138,7 @@ for (my $row=0; $row<=$arows; $row++) {
           length => 1, # so far
           note => $chan{outnote} || $chan{note},
           vol  => $chan{vol},
+          magicsource => defined $note ? $note->{magicsource} : undef
         });
         print_dp "new %.1f [%d:%d]\n",$notedata[$outchan][-1]{note},$outchan+1,scalar @{$notedata[$outchan]};
       } else {
@@ -1145,6 +1184,8 @@ for (my $voice=0; $voice<$NUMCH; $voice++) {
     if ($voice<=2) { # voice channel
       while ($note>=0 && $note<45) { $note+=12; }
       $freq=(440.0 * exp(($note-69)*log(2.0)/12.0));  #thanks to Lance Ewing!
+      #if ($voice==2 && $INSTRDATA[$notedata[$voice][$in]{instr}||99]{buzz}) { $freq=(440.0 * exp(($note-46.05)*log(2.0)/12.30)); } # +21.6
+      if ($voice==2 && $notedata[$voice][$in]{magicsource}) { $freq=(440.0 * exp(($note-46.05)*log(2.0)/12.30)); } # +21.6
       if (int($freq)!=$freq) {
         if ($freq<int($freq)+0.5) {} else {$freq=int($freq)+1}
       }
@@ -1226,12 +1267,13 @@ sub parse_instr_name {
   $name = shift @_;
 
   if ($name =~ /\[(.+?)\]/) {
-    my $agiflag = $1; # Captures the string inside [AGI:...]
-    if ($agiflag =~ /SHIFT([+-]\d+)/) {
+    my $agiflag = $1; # Captures the string inside [...]
+    if ($agiflag =~ /SHIFT([0-9\.\+\-]+)/) {
       $INSTRDATA[$ins]{shift}=0+$1;
-    } elsif ($agiflag eq "NOISE") {
+    }
+    if ($agiflag =~ /NOISE/) {
       $INSTRDATA[$ins]{noise}=1;
-    } elsif ($agiflag eq "BUZZ") {
+    } elsif ($agiflag =~ /BUZZ/) {
       $INSTRDATA[$ins]{buzz}=1;
     }
   }
