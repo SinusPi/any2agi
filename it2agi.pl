@@ -973,6 +973,7 @@ if ($MAXLENGTH) {
   print "Total rows $oldarows, limited to $arows.\n";
 }
 
+my $GLOBALVOL = 64;
 
 my $row_ticks = 0;
 
@@ -1141,7 +1142,7 @@ for (my $row=0; $row<=$arows; $row++) {
         push(@{$notedata[$outchan]}, {
           length => 1, # so far
           note => $chan{outnote} || $chan{note},
-          vol  => $chan{vol},
+          vol  => $chan{vol} * (defined $chan{chanvol} ? $chan{chanvol} : 64)/64 * $GLOBALVOL/64,
           magicsource => defined $note ? $note->{magicsource} : undef
         });
         print_dp "new %.1f [%d:%d]\n",$notedata[$outchan][-1]{note},$outchan+1,scalar @{$notedata[$outchan]};
