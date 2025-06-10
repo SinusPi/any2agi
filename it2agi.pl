@@ -1131,7 +1131,9 @@ for (my $row=0; $row<=$arows; $row++) {
       if ($chan{command}!=$IT_CMD_H_VIB && !$INSTRDATA[$chan{instr}]{vib}) { delete $chan{vibphase}; }
       if ($chan{command}!=$IT_CMD_J_ARP && !$INSTRDATA[$chan{instr}]{arp}) { delete $chan{arpphase}; }
 
-      print_dp "changed: %s; ",join(",",map { "$_=$chan{$_}" } sort keys %changed);
+      if (keys %changed) {
+        print_dp "changed: %s; ",join(",",map { "$_=$chan{$_}" } sort keys %changed);
+      }
 
       # no more changes, just output
 
