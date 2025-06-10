@@ -1073,7 +1073,8 @@ for (my $row=0; $row<=$arows; $row++) {
         my $prev_outnote = $chan{outnote} || $chan{note}; # previous output note
         my $p_up = $chan{command}==$IT_CMD_F_PORTU || ($chan{command}==$IT_CMD_G_PORT && $chan{note}>$prev_outnote);
         my $p_to = $chan{command}==$IT_CMD_G_PORT;
-        my $portstep = $chan{param};
+        my $portstep = $chan{param} || $chan{mem_porta};
+        $chan{mem_porta}=$portstep;
         if (!$p_up) { $portstep=-$portstep; }
         my $outnote = $prev_outnote + $portstep / 16; # output note is the same as input note
         if ($p_to && (($p_up && $outnote>$chan{note}) || (!$p_up && $outnote<$chan{note}))) { $outnote=$chan{note}; }
@@ -1089,7 +1090,8 @@ for (my $row=0; $row<=$arows; $row++) {
 
         my $vibphase = int($chan{vibphase}+0.01)||0; # fix rounding errors
         if ($changed{note}) { $vibphase = 0; } # reset vibrato phase on note change
-        my $vibs = $chan{command}==$IT_CMD_H_VIB ? $chan{param} : $INSTRDATA[$chan{instr}]{vib};
+        my $vibs = $chan{command}==$IT_CMD_H_VIB ? ($chan{param} || $chan{mem_vibra}) : $INSTRDATA[$chan{instr}]{vib};
+        $chan{mem_vibra}=$vibs;
         my ($vibspeed,$vibdepth) = (($vibs >> 4) & 0x0F, $vibs & 0x0F);
         my $outnote = $chan{note} + sin($vibphase / $VIBLENGTH * 2 * 3.14159) * ($vibdepth/15);
         print_dp "= vibrato on %.1f, depth=%d speed=%d phase=%d/%d = %.1f; ",$chan{note},$vibdepth,$vibspeed,$vibphase,$VIBLENGTH,$outnote;
@@ -1103,7 +1105,8 @@ for (my $row=0; $row<=$arows; $row++) {
 
         my $arpphase = int($chan{arpphase}+0.01)||0; # fix rounding errors
         if ($changed{note}) { $arpphase = 0; } # reset arpeggio phase on note change
-        my $arps = $chan{command}==$IT_CMD_J_ARP ? $chan{param} : $INSTRDATA[$chan{instr}]{arp};
+        my $arps = $chan{command}==$IT_CMD_J_ARP ? ($chan{param} || $chan{mem_arp}) : $INSTRDATA[$chan{instr}]{arp};
+        $chan{mem_arp}=$arps;
         my @arpn = (0, $arps >> 4, $arps & 0x0F);
         my $outnote = $chan{note} + $arpn[$arpphase]; # leave the note unchanged, but add arpeggio
         print_dp "= arpeggio on %.1f, phase=%d +%d = %d; ",$chan{note},$arpphase,$arpn[$arpphase],$outnote;
