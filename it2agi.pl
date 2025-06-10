@@ -242,16 +242,27 @@ $POLYMODE = 0;
   999 => { note => 16, length => 33 },  # hihat closed
 );
 $IT_CMD_A_SPEED = 1;
-$IT_CMD_B_JUMP = 2;
-$IT_CMD_C_BREAK = 3;
+$IT_CMD_B_JUMP = 2;  #--
+$IT_CMD_C_BREAK = 3; #--
 $IT_CMD_D_VOLSL = 4;
 $IT_CMD_E_PORTD = 5;
 $IT_CMD_F_PORTU = 6;
 $IT_CMD_G_PORT = 7;
 $IT_CMD_H_VIB = 8;
-$IT_CMD_I_TREMR = 9;
+$IT_CMD_I_TREMR = 9; #--
 $IT_CMD_J_ARP = 10;
+$IT_CMD_K_VOLSLVIB = 11; #--
+$IT_CMD_L_VOLSLPORT = 12; #--
+$IT_CMD_M_CHANVOL = 13;
+$IT_CMD_N_CHANVOLSL = 14; #--
+$IT_CMD_O_OFFSET = 15; #--
+$IT_CMD_P_PANSL = 16; #n/a
+$IT_CMD_Q_RETRIG = 17; #--
+$IT_CMD_R_TREMOLO = 18; #--
+$IT_CMD_S_SPECIAL = 19; #--
 $IT_CMD_T_TEMPO = 20;
+$IT_CMD_U_VIBFINE = 21; #--
+$IT_CMD_V_GLOBVOL = 22;
 # good to know, but unused
 $IT_NOTE_OFF = 246;
 $IT_NOTE_CUT = 254;
