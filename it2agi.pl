@@ -1208,7 +1208,7 @@ for (my $row=0; $row<=$arows; $row++) {
         push(@{$notedata[$outchan]}, {
           length => 1, # so far
           note => $chan{fxnote}//$chan{note},
-          vol  => $chan{vol} * ($chan{chanvol}//64)/64 * $GLOBALVOL/64,
+          vol  => $chan{vol} * ($chan{chanvol}//64)/64 * $GLOBALVOL/128,
           magicsource => $note->{magicsource}
         });
         print_dp "new %.1f_%02d [%d:%d]\n",$notedata[$outchan][-1]{note},$notedata[$outchan][-1]{vol},$outchan+1,scalar @{$notedata[$outchan]};
