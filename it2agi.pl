@@ -1283,7 +1283,8 @@ for (my $voice=0; $voice<$NUMCH; $voice++) {
     }
 
     if ($note==-1) { $vol=0; } #rest
-    $out_att=128 + (($vreg|1)<<4) + (15-($vol>>2));
+    $vol=$vol>>2; # TODO: make it work in log scale, as SN76489 does
+    $out_att=128 + (($vreg|1)<<4) + (15-$vol);
     if ($vol<0) { # skip volume!?
       $out_att=0;
     }
@@ -1294,7 +1295,7 @@ for (my $voice=0; $voice<$NUMCH; $voice++) {
     $packet = pack("SCCC",$out_duration,$out_fv,$out_fc,$out_att);
     $snddata[$voice] = $snddata[$voice].$packet;
     
-    if ($DEBUG_AGI) { printf("%4d: n=%5.1f/%s v=%3d  d=%3d  =  %02x %02x %02x %02x %02x\n",
+    if ($DEBUG_AGI) { printf("%4d: n=%5.1f/%s v=%2d  d=%3d  =  %02x %02x %02x %02x %02x\n",
      $in,
      $note, $voice<=2 && sprintf("%6.1fHz",$freq) || ($note==-1?"------- ":sprintf("%4s,%2s ",qw(buzz hiss)[$out_noisetype],qw(hi md lo c2)[$out_noisefreq])), $vol, $out_duration,
      ord(substr($packet,0,1)),ord(substr($packet,1,1)),$out_fv,$out_fc,$out_att); }
