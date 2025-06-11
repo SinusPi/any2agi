@@ -1211,10 +1211,10 @@ for (my $row=0; $row<=$arows; $row++) {
           vol  => $chan{vol} * ($chan{chanvol}//64)/64 * $GLOBALVOL/128,
           magicsource => $note->{magicsource}
         });
-        print_dp "new %.1f_%02d [%d:%d]\n",$notedata[$outchan][-1]{note},$notedata[$outchan][-1]{vol},$outchan+1,scalar @{$notedata[$outchan]};
+        print_dp "new %.1f_%02d [%d:%d]\n",$notedata[$outchan][-1]{note},$notedata[$outchan][-1]{vol},$outchan+1,scalar @{$notedata[$outchan]}+1;
       } else {
         $notedata[$outchan][-1]{length}++;
-        print_dp "old %.1f_%02d=%d [%d:%d]\n",$notedata[$outchan][-1]{note},$notedata[$outchan][-1]{vol},$notedata[$outchan][-1]{length},$outchan+1,scalar @{$notedata[$outchan]};
+        print_dp "old %.1f_%02d=%d [%d:%d]\n",$notedata[$outchan][-1]{note},$notedata[$outchan][-1]{vol},$notedata[$outchan][-1]{length},$outchan+1,scalar @{$notedata[$outchan]}+1;
       }
       
       %{$chans[$outchan]} = %chan;
