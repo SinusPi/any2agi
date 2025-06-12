@@ -241,28 +241,31 @@ $POLYMODE = 0;
   42 => { note => 14, length => 17 },  # hihat closed
   999 => { note => 16, length => 33 },  # hihat closed
 );
-$IT_CMD_A_SPEED = 1;
-$IT_CMD_B_JUMP = 2;  #--
-$IT_CMD_C_BREAK = 3; #--
-$IT_CMD_D_VOLSL = 4;
-$IT_CMD_E_PORTD = 5;
-$IT_CMD_F_PORTU = 6;
-$IT_CMD_G_PORT = 7;
-$IT_CMD_H_VIB = 8;
-$IT_CMD_I_TREMR = 9; #--
-$IT_CMD_J_ARP = 10;
-$IT_CMD_K_VOLSLVIB = 11; #--
+$IT_CMD_A_SPEED     =  1;
+$IT_CMD_B_JUMP      =  2; #--
+$IT_CMD_C_BREAK     =  3; #--
+$IT_CMD_D_VOLSL     =  4;
+$IT_CMD_E_PORTD     =  5;
+$IT_CMD_F_PORTU     =  6;
+$IT_CMD_G_PORT      =  7;
+$IT_CMD_H_VIB       =  8;
+$IT_CMD_I_TREMR     =  9; #--
+$IT_CMD_J_ARP       = 10;
+$IT_CMD_K_VOLSLVIB  = 11; #--
 $IT_CMD_L_VOLSLPORT = 12; #--
-$IT_CMD_M_CHANVOL = 13;
+$IT_CMD_M_CHANVOL   = 13;
 $IT_CMD_N_CHANVOLSL = 14; #--
-$IT_CMD_O_OFFSET = 15; #--
-$IT_CMD_P_PANSL = 16; #n/a
-$IT_CMD_Q_RETRIG = 17; #--
-$IT_CMD_R_TREMOLO = 18; #--
-$IT_CMD_S_SPECIAL = 19; #--
-$IT_CMD_T_TEMPO = 20;
-$IT_CMD_U_VIBFINE = 21; #--
-$IT_CMD_V_GLOBVOL = 22;
+$IT_CMD_O_OFFSET    = 15; #--
+$IT_CMD_P_PANSL     = 16; #n/a
+$IT_CMD_Q_RETRIG    = 17; #--
+$IT_CMD_R_TREMOLO   = 18; #--
+$IT_CMD_S_SPECIAL   = 19; #--
+$IT_CMD_T_TEMPO     = 20;
+$IT_CMD_U_VIBFINE   = 21; #--
+$IT_CMD_V_GLOBVOL   = 22;
+
+$MOD_CMD_C_VOL = 0x0C;
+
 # good to know, but unused
 $IT_NOTE_OFF = 246;
 $IT_NOTE_CUT = 254;
@@ -544,9 +547,10 @@ sub read_MOD() {
           $notedata->{note} = $note;
           $notedata->{instr} = $instr;
           $notedata->{volpan} = 64; # default volume
+          #$notedata->{command} = $command;
         }
 
-        if ($command==0x0C) { $notedata->{volpan}=$args; }
+        if ($command==$MOD_CMD_C_VOL) { $notedata->{volpan}=$args; }
         #if ($INSTRARP[$instr]) { $notedata->{instrarp}=$INSTRARP[$instr]; }
         $pattern[$arow+$row][$chan] = $notedata;
         
@@ -972,19 +976,30 @@ sub min ($$) { $_[$_[0] > $_[1]] }
 print "Pass 3: Rendering rests and effects\n";
 $notedata = [];
 
-my $ticks_per_row=1;
+my $TICKS_PER_ROW=1;
 if ($IT_TEMPO) {
+  my $rowdur_ms_IT = (2500 / $IT_TEMPO) * $IT_SPEED; # 2500 is the default IT row duration in ms
+  printf "Tempo %d speed %d, 'classic' tempo: 1 row = %.2f ms\n",$IT_TEMPO,$IT_SPEED,$rowdur_ms_IT;
+  $TICKS_PER_ROW = calc_ticks_per_row();
+  $rowdur_ms = $TICKS_PER_ROW * $AGI_TICK;
+  my $tempomode = $tempomode_override || "even";
+  if ($tempomode eq "even") {
+    # row duration is a multiple of AGI ticks
+    printf "Tempo mode is 'even', row = %d AGI ticks\n",$TICKS_PER_ROW,$rowdur_ms;
+  } else {
+    print "Tempo mode is 'exact', row = %.1f AGI ticks (%d ms/row), playback may be uneven.\n",$TICKS_PER_ROW,$rowdur_ms;
+  }
+}
+
+sub calc_ticks_per_row {
   my $rowdur_ms = (2500 / $IT_TEMPO) * $IT_SPEED; # 2500 is the default IT row duration in ms
-  printf "Tempo %d speed %d, 'classic' tempo: 1 row = %.2f ms\n",$IT_TEMPO,$IT_SPEED,$rowdur_ms;
-  $tempomode = $tempomode_override || "even";
+  my $tempomode = $tempomode_override || "even";
+  my $ticks_per_row = $rowdur_ms/$AGI_TICK; if ($ticks_per_row<1) { $ticks_per_row=1; }
   if ($tempomode eq "even") {
     # pull the row duration to be a multiple of AGI ticks
-    $ticks_per_row = int($rowdur_ms/$AGI_TICK + 0.5); if ($ticks_per_row<1) { $ticks_per_row=1; }
-    $rowdur_ms = $ticks_per_row*$AGI_TICK;
-    printf "Tempo mode is 'even', row = %d AGI ticks (%.2f ms)\n",$ticks_per_row,$rowdur_ms;
-  } else {
-    print "Tempo mode is 'exact', row playback may be uneven.\n";
+    $ticks_per_row = int($ticks_per_row + 0.5);
   }
+  return $ticks_per_row;
 }
 
 $arows = $#pattern+1;
@@ -1002,22 +1017,41 @@ for (my $outchan=0; $outchan<$NUMCH; $outchan++) { $notedata[$outchan] = []; $ch
 ROW:
 for (my $row=0; $row<=$arows; $row++) {
 
-  $row_ticks += $ticks_per_row; # how many AGI ticks in this row?
-
-
   # GLOBAL commands, handle before anything else
   undef $changed_globvol;
   for (my $outchan=0; $outchan<$NUMCH; $outchan++) {
     my $inchan = $CHANNELS[$outchan]-1;
     my $note = $pattern[$row][$inchan];
+    
     if ($note->{command}==$IT_CMD_V_GLOBVOL) {
+
       $GLOBALVOL = $note->{param}; if ($GLOBALVOL>128) { $GLOBALVOL=128; }
       print_dp "Global volume set to %d\n",$GLOBALVOL;
       delete $note->{command}; delete $note->{param}; # remove command
       $changed_globvol = 1; # mark row volume changed
+    
+    } elsif ($note->{command}==$IT_CMD_A_SPEED) {
+
+      $IT_SPEED = $note->{param};
+      $TICKS_PER_ROW = calc_ticks_per_row();
+      printf "Row %d: speed command, new row duration %.1f ticks\n",$row,$TICKS_PER_ROW;
+
+    } elsif ($note->{command}==$IT_CMD_T_TEMPO) {
+
+      if ($note->{param}&0x80>>4 == 0) {
+        printf("T0x command unsupported, skipping.\n");
+      } elsif ($note->{param}&0x80>>4 == 1) {
+        printf("T1x command unsupported, skipping.\n");
+      } elsif ($note->{param}&0x80>>4 >= 2) {
+        $IT_TEMPO = $note->{param};
+      }
+      $TICKS_PER_ROW = calc_ticks_per_row();
+      printf "Row %d: tempo command, new row duration %.1f ticks\n",$row,$TICKS_PER_ROW;
     }
+
   }
 
+  $row_ticks += $TICKS_PER_ROW; # how many AGI ticks in this row?
 
   CHAN:
   for (my $outchan=0; $outchan<$NUMCH; $outchan++) {
@@ -1032,7 +1066,6 @@ for (my $row=0; $row<=$arows; $row++) {
     # commands don't carry over solid rows, only over extras
     delete $chan{command};
     delete $chan{param};
-    undef $changed_note_ovr; if ($chan{fxnote}) { delete $chan{fxnote}; $changed_note_ovr=1; };
 
     # what's at this row in this channel? an old note still playing, or a new note?
     for (my $m=0;$m<$row_ticks;$m++) { # repeat for each AGI tick in this row
@@ -1045,7 +1078,7 @@ for (my $row=0; $row<=$arows; $row++) {
       if ($changed_globvol && $m==0) { $changed{vol}=1; } # for all channels
       if ($chan{overridden}) { undef $note; delete $chan{overridden}; next ROW; }
       if ($changed_note_ovr) { $changed{note} = $changed_note_ovr; undef $changed_note_ovr; }
-      
+
       if ($note) { # SOMETHING changes, not necessarily a new note
         print_dp "NEW: ".join(" ",map { "$_=$note->{$_}" } sort keys %{$note})."; ";
         # new note, start playing it
@@ -1084,6 +1117,7 @@ for (my $row=0; $row<=$arows; $row++) {
           $changed{param} = 1; # param : may not change
         }
       }
+      if (!$chan{command} && !$INSTRDATA[$chan{instr}]{arp}) { delete $chan{fxnote}; }
 
       print_dp "[ %s ]; ",join(" ",map { "$_=$chan{$_}" } sort keys %chan);
 
@@ -1211,10 +1245,10 @@ for (my $row=0; $row<=$arows; $row++) {
           vol  => $chan{vol} * ($chan{chanvol}//64)/64 * $GLOBALVOL/128,
           magicsource => $note->{magicsource}
         });
-        print_dp "new %.1f_%02d [%d:%d]\n",$notedata[$outchan][-1]{note},$notedata[$outchan][-1]{vol},$outchan+1,(scalar @{$notedata[$outchan]})+1;
+        print_dp "new %.1f_%02d [%d:%d]\n",$notedata[$outchan][-1]{note},$notedata[$outchan][-1]{vol},$outchan+1,scalar(@{$notedata[$outchan]});
       } else {
         $notedata[$outchan][-1]{length}++;
-        print_dp "old %.1f_%02d=%d [%d:%d]\n",$notedata[$outchan][-1]{note},$notedata[$outchan][-1]{vol},$notedata[$outchan][-1]{length},$outchan+1,(scalar @{$notedata[$outchan]})+1;
+        print_dp "old %.1f_%02d=%d [%d:%d]\n",$notedata[$outchan][-1]{note},$notedata[$outchan][-1]{vol},$notedata[$outchan][-1]{length},$outchan+1,scalar(@{$notedata[$outchan]});
       }
       
       %{$chans[$outchan]} = %chan;
@@ -1296,7 +1330,7 @@ for (my $voice=0; $voice<$NUMCH; $voice++) {
     $snddata[$voice] = $snddata[$voice].$packet;
     
     if ($DEBUG_AGI) { printf("%4d: n=%5.1f/%s v=%2d  d=%3d  =  %02x %02x %02x %02x %02x\n",
-     $in,
+     $in+1,
      $note, $voice<=2 && sprintf("%6.1fHz",$freq) || ($note==-1?"------- ":sprintf("%4s,%2s ",qw(buzz hiss)[$out_noisetype],qw(hi md lo c2)[$out_noisefreq])), $vol, $out_duration,
      ord(substr($packet,0,1)),ord(substr($packet,1,1)),$out_fv,$out_fc,$out_att); }
   }
