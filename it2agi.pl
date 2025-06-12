@@ -156,7 +156,10 @@ Version history:
  0.4.0: MIDI support has drummaps now
  0.5.0: --instr-* syntax changed, arpeggio, portamento, vibrato supported
         magic buzz,noise instruments
- 
+ 0.6.0: tempo changes in IT implemented properly;
+        global/channel volume setting/effect;
+        test suite enhanced to check debug printouts (easier to read)
+
 END
 ;
   exit(0);
@@ -165,7 +168,7 @@ END
 
 if ($ARGV[0] eq "" || $ARGV[0] eq "-h" || $ARGV[0] eq "--help") {
   print <<"USAGE";
-IT2AGI version 0.5.0
+IT2AGI version 0.6.0
 (c) 1999-2000 Nat Budin - portions by Lance Ewing
 Fixes 2025 by Adam 'Sinus' Skawinski
 
@@ -180,13 +183,16 @@ Options:
     the last being used as noise. --channels 1,2,3 would
     simply omit the noise channel. Midi channels are
     numbered from 0.
-  --tempo-exact - force exact tempo, at the cost of even
+  --tempo-exact - allow exact tempo, at the cost of even
     playback. AGI engine plays using 1/60s ticks, so any
-    playback must either use equal note lengths (at the
-    cost of a different BPM from the original - by
-    default), or try to match the original's BPM exactly
-    by using varied note lengths. MIDI conversion uses
-    exact tempo matching only.
+    playback must either use note lengths being multiples
+    of 1/60s (at the cost of a different BPM from the
+    original - by default), or try to match the original's
+    BPM exactly by using varied note lengths.
+    MIDI conversion uses exact tempo matching only.
+    IT/MOD conversion defaults to "even" playback, snapping
+    to 1/60s on every tempo change.
+    IT smooth tempo changes are not supported.
   --auto-drum-offs n - automatically terminate notes on
     the noise channel after n ticks. Useful when
     converting input files that use short samples and
