@@ -286,6 +286,7 @@ while ($v = shift @ARGV) {
   elsif ($v eq "--channels") { @CHANNELS = split(",",shift @ARGV); $CHANNELS_DEFAULT=0; }
   elsif ($v eq "--tempo-exact") { $tempomode_override="exact"; }
   elsif ($v eq "--auto-drum-offs") { $auto_drum_offs = shift @ARGV; }
+  elsif ($v eq "--buzz-retune") { $buzz_retune = 1; }
   elsif ($v eq "--instr")  {
     my $instr = shift @ARGV;
     my $meta = shift @ARGV;
@@ -1296,7 +1297,8 @@ for (my $voice=0; $voice<$NUMCH; $voice++) {
       while ($note>=0 && $note<45) { $note+=12; }
       $freq=(440.0 * exp(($note-69)*log(2.0)/12.0));  #thanks to Lance Ewing!
       #if ($voice==2 && $INSTRDATA[$notedata[$voice][$in]{instr}||99]{buzz}) { $freq=(440.0 * exp(($note-46.05)*log(2.0)/12.30)); } # +21.6
-      if ($voice==2 && $notedata[$voice][$in]{magicsource}) { $freq=(440.0 * exp(($note-46.05)*log(2.0)/12.30)); } # +21.6
+      if ($buzz_retune && $voice==2 && $notedata[$voice][$in]{magicsource}) { $freq=$freq/(16/15); }
+      if ($voice==2 && $notedata[$voice][$in]{magicsource}) { $freq<<=1; }
       if (int($freq)!=$freq) {
         if ($freq<int($freq)+0.5) {} else {$freq=int($freq)+1}
       }
