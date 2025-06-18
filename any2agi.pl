@@ -4,12 +4,11 @@
 # mentioned above, change the line above to reflect your system
 # setup.
 #
-# Before running IT2AGI, make sure you have Perl 5 or above
+# Before running ANY2AGI, make sure you have Perl 5 or above
 # installed on your computer.  Unix users probably already have
 # it.  Windows users can get a free Win32 implementation at:
 #
-# http://www.activestate.com
-
+# http://www.activestate.com or http://www.strawberryperl.com
 
 
 if ($ARGV[0] eq "--readme") {
@@ -204,6 +203,7 @@ Version history:
         global/channel volume setting/effect;
         test suite enhanced to check debug printouts (easier to read)
  0.7.0: VGM support added
+ 0.8.0: AGI SOUND is now a valid input format.
 
 END
 ;
@@ -213,7 +213,7 @@ END
 
 if ($ARGV[0] eq "" || $ARGV[0] eq "-h" || $ARGV[0] eq "--help") {
   print <<"END_OF_USAGE";
-ANY2AGI version 0.7.0
+ANY2AGI version 0.8.0
 (c) 1999-2000 Nat Budin - portions by Lance Ewing
 Enhancements 2025 by Adam 'Sinus' Skawinski, sinus[at]sinpi.net
 
