@@ -854,16 +854,19 @@ sub read_VGM() {
   read(INFILE,$_,2+1); my ($snfed,$snsrw) = unpack("SC"); # printf("%04x %04x\n",$snfed,$snsrw);
   read(INFILE,$_,1); my @snflg = unpack("B8");
   read(INFILE,$_,4+4); my ($ym26c,$ym21c)=unpack("L2");
-  read(INFILE,$_,4); my $vgmof=unpack("L");
-
+  read(INFILE,$_,4); my $vgmof=unpack("L"); if ($vgmof>0) { $vgmof+=tell(INFILE)-4; }
+  if ($ver<0x0150) { $vgmof=0x40; }
+  
   seek(INFILE,$vgmof,0);
 
   my $DEBUG_OUT=1;
   my $DEBUG_IN=1;
   my $DEBUG_DETAIL=1;
 
+  my $latch = 0;
+
   #keep reading infile
-  $row = 0;
+  my $row = 0;
   while (!eof(INFILE)) {
     read(INFILE, $_, 1); $_=unpack("C");
     if ($_==0x50) { # SN76489 byte coming next
@@ -874,15 +877,15 @@ sub read_VGM() {
         $latch=$chn;
         ($vol,$bit4) = (($dat>>4)&0x01,$dat&0x0F);
         if ($vol) {
-          $pattern[$row][$latch]{volpan} = ( $chanvol[$latch] = 15-$bit4 );
+          $pattern[$row][$latch]{volpan} = 63 - ( ( $chanvol[$latch] = $bit4 ) << 2 );
           $pattern[$row][$latch]{freq} = $chanfreq[$latch];
         } else {
           $pattern[$row][$latch]{freq} = ( $chanfreq[$latch] = $bit4 );
-          $pattern[$row][$latch]{volpan} = $chanvol[$latch];
+          $pattern[$row][$latch]{volpan} = 63 - ( $chanvol[$latch] << 2 );
         }
       } else {
         $pattern[$row][$latch]{freq} = ($chanfreq[$latch] |= (($b & 0x3F) << 4));
-        $pattern[$row][$latch]{volpan} = $chanvol[$latch];
+        $pattern[$row][$latch]{volpan} = 63 - ( $chanvol[$latch] << 2 );
       }
 
       #debugs 
@@ -921,12 +924,11 @@ sub read_VGM() {
       # stereo
       read(INFILE, $_, 1);
     } else {
-      die ("$infile : UNEXPECTED COMMAND %02x at %x\n",$_,tell(INFILE)-1);
+      die sprintf("$infile : UNEXPECTED COMMAND %02x at %x\n",$_,tell(INFILE)-1);
     }
   }
   close(INFILE);
 
-  die "VGM file format not supported yet.\n";
 }
 
 ###########################################################################
@@ -1283,7 +1285,7 @@ for (my $row=0; $row<=$arows; $row++) {
       
       } elsif (defined $note->{freq}) { # play it straight
 
-        $chan{freq} = $freq->{freq} // $chan{freq};
+        $chan{freq} = $note->{freq} // $chan{freq};
         print_dp "= freq %.1f; ",$chan{freq};
         $changed{note}=1;
       }
