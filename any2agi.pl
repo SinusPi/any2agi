@@ -861,26 +861,33 @@ sub read_VGM() {
   read(INFILE,$_,4); # "Vgm "
   read(INFILE,$_,4); # eof offset
   read(INFILE,$_,4); $ver=unpack("L"); printf("Reading VGM file, version %.2f\n",(($ver&0xff00)>>8)+($ver&0x00ff)/100);
-  read(INFILE,$_,4*6); my ($snclk,$ymclk,$gd3of,$ttsmp,$lpoff,$lpsmp)=unpack("L6");
+  read(INFILE,$_,4*2); my ($snclk,$ymclk)=unpack("L2");
   if ($snclk==0) { die("This VGM file has no data for an SN76489 chip.\n"); }
-  read(INFILE,$_,4); my $rate=unpack("L");
+  print("SN76489 clock: $snclk Hz\n");
+  print("WARNING: This VGM file has data for a YM2413 chip, which is not supported.\n") if $ymclk>0;
+  read(INFILE,$_,4*5); my ($gd3of,$ttsmp,$lpoff,$lpsmp,$rate)=unpack("L5");
+  print("Sample rate: $rate Hz\n") if $rate>0;
   read(INFILE,$_,2+1); my ($snfed,$snsrw) = unpack("SC"); # printf("%04x %04x\n",$snfed,$snsrw);
   read(INFILE,$_,1); my @snflg = unpack("B8");
   read(INFILE,$_,4+4); my ($ym26c,$ym21c)=unpack("L2");
+  print("WARNING: This VGM file has data for a YM2612 chip, which is not supported.\n") if $ym26c>0;
+  print("WARNING: This VGM file has data for a YM2151 chip, which is not supported.\n") if $ym21c>0;
   read(INFILE,$_,4); my $vgmof=unpack("L"); if ($vgmof>0) { $vgmof+=tell(INFILE)-4; }
   if ($ver<0x0150) { $vgmof=0x40; }
+  read(INFILE,$_,4); my $spcmc=unpack("L");
+  print("WARNING: This VGM file has data for a Sega PCM chip, which is not supported.\n") if $spcmc>0;
   
   seek(INFILE,$vgmof,0);
-
-  my $DEBUG_OUT=1;
-  my $DEBUG_IN=1;
-  my $DEBUG_DETAIL=1;
 
   my $latch = 0;
 
   #keep reading infile
   my $row = 0;
+  my $sample = 0;
+  my $SAMPLERATE = 44100;
+
   while (!eof(INFILE)) {
+    $row = $sample / ($SAMPLERATE/60);
     read(INFILE, $_, 1); $_=unpack("C");
     if ($_==0x50) { # SN76489 byte coming next
       read(INFILE, $_, 1);
@@ -902,15 +909,15 @@ sub read_VGM() {
       }
 
       #debugs 
-      printf("%08b",$b) if $DEBUG_IN && !$DEBUG_DETAIL && $latch==1;
+      #print_di "%08b",$b;
       if ($DEBUG_IN && $DEBUG_DETAIL && $latch==1) {
-        printf("%-4s %d ",("x"x($latch+1)),$cmd);
+        print_di "%-4s %d ",("x"x($latch+1)),$cmd;
         if ($cmd) {
-          printf("%02b %d %04b",$chn,$vol,$bit4);
+          print_di "%02b %d %04b",$chn,$vol,$bit4;
         } else {
-          printf("%07b",$dat & 0x3F);
+          print_di "%07b",$dat & 0x3F;
         }
-        print "\n";
+        print_di "\n";
       }
 
       #if ($latch!=0) { print(" (ign)\n"); next; };
@@ -918,25 +925,35 @@ sub read_VGM() {
 
     } elsif ($_==0x61) {
       # wait nn samples
-      read(INFILE,$_,2); $del=unpack("S"); $del /= 735; $del=int($del+0.5);
-      $row += $del;
-      print ".*$del\n" if $DEBUG_IN;
+      read(INFILE,$_,2); $delay=unpack("S");
+      $sample += $delay;
+      print_di  ".*$delay\n";
+
     } elsif ($_==0x62) {
       # wait 1/60
-      $row++;
-      print".\n" if $DEBUG_IN;
+      $sample += $SAMPLERATE / 60;
+      print_di ".\n";
+
     } elsif ($_==0x63) {
       # wait 1/50
-      $row++;
-      print";\n" if $DEBUG_IN;
+      $sample += $SAMPLERATE / 50;
+      print_di ";\n";
+
+    } elsif (($_&0xF0)==0x70) {
+      # wait 0x7n = n+1
+      $sample += ($_&0x0F)+1;
+
     } elsif ($_==0x66) {
       # END
-      print"-\n" if $DEBUG_IN;;
+      print_di "-\n" ;
       last;
+
     } elsif ($_==0x4f) {
       # stereo
       read(INFILE, $_, 1);
+
     } else {
+
       die sprintf("$infile : UNEXPECTED COMMAND %02x at %x\n",$_,tell(INFILE)-1);
     }
   }
