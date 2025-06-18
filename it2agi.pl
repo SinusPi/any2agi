@@ -332,6 +332,8 @@ if (its_SND()) {
   read_XM();
 } elsif (its_MID()) {
   read_MID();
+} elsif (its_VGM()) {
+  read_VGM();
 } else {
   die("$infile : Unrecognized input file format.\n");
 }
@@ -844,6 +846,28 @@ sub read_vlq {
   } while ($b & 0x80);
   #printf("=%3d ",$out);
   return $out;
+}
+
+sub its_VGM() {
+  seek(INFILE,0,0);
+  read(INFILE,my $buf,4);
+  return ($buf eq "Vgm ");
+}
+sub read_VGM() {
+  $FORMAT="VGM";
+  read(INFILE,$_,4); # "Vgm "
+  read(INFILE,$_,4); # eof offset
+  read(INFILE,$_,4); $ver=unpack("L"); printf("Reading VGM file, version %.2f\n",(($ver&0xff00)>>8)+($ver&0x00ff)/100);
+
+  read(INFILE,$_,4*6); my ($snclk,$ymclk,$gd3of,$ttsmp,$lpoff,$lpsmp)=unpack("L6"); print($snclk."\n");
+  if ($snclk==0) { die("This VGM file has no data for an SN76489 chip.\n"); }
+  read(INFILE,$_,4); $rate=unpack("L");
+  read(INFILE,$_,2+1); my ($snfed,$snsrw) = unpack("SC"); printf("%04x %04x\n",$snfed,$snsrw);
+  read(INFILE,$_,1); my @snflg = unpack("B8");
+  read(INFILE,$_,4+4); my ($ym26c,$ym21c)=unpack("L2");
+  read(INFILE,$_,4); my $vgmof=unpack("L");
+
+  die "VGM file format not supported yet.\n";
 }
 
 ###########################################################################
