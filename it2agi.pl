@@ -840,20 +840,91 @@ sub MIDI_rd_vlq {
 sub read_VGM() {
   seek(INFILE,0,0);
   read(INFILE,my $buf,4);
+  my (@buf) = unpack("CCCC",$buf); if (sprintf("%02x%02x%02x%02x",@buf) eq "1f8b0800") { die("$infile : This is a GZIP-compressed VGM file. You'll have to unGZIP it first, sorry...\n"); }
   return 0 unless $buf eq "Vgm ";
 
   $FORMAT="VGM";
+  seek(INFILE,0,0);
   read(INFILE,$_,4); # "Vgm "
   read(INFILE,$_,4); # eof offset
   read(INFILE,$_,4); $ver=unpack("L"); printf("Reading VGM file, version %.2f\n",(($ver&0xff00)>>8)+($ver&0x00ff)/100);
-
-  read(INFILE,$_,4*6); my ($snclk,$ymclk,$gd3of,$ttsmp,$lpoff,$lpsmp)=unpack("L6"); print($snclk."\n");
+  read(INFILE,$_,4*6); my ($snclk,$ymclk,$gd3of,$ttsmp,$lpoff,$lpsmp)=unpack("L6");
   if ($snclk==0) { die("This VGM file has no data for an SN76489 chip.\n"); }
-  read(INFILE,$_,4); $rate=unpack("L");
-  read(INFILE,$_,2+1); my ($snfed,$snsrw) = unpack("SC"); printf("%04x %04x\n",$snfed,$snsrw);
+  read(INFILE,$_,4); my $rate=unpack("L");
+  read(INFILE,$_,2+1); my ($snfed,$snsrw) = unpack("SC"); # printf("%04x %04x\n",$snfed,$snsrw);
   read(INFILE,$_,1); my @snflg = unpack("B8");
   read(INFILE,$_,4+4); my ($ym26c,$ym21c)=unpack("L2");
   read(INFILE,$_,4); my $vgmof=unpack("L");
+
+  seek(INFILE,$vgmof,0);
+
+  my $DEBUG_OUT=1;
+  my $DEBUG_IN=1;
+  my $DEBUG_DETAIL=1;
+
+  #keep reading infile
+  $row = 0;
+  while (!eof(INFILE)) {
+    read(INFILE, $_, 1); $_=unpack("C");
+    if ($_==0x50) { # SN76489 byte coming next
+      read(INFILE, $_, 1);
+      my $b=unpack("C"); 
+      my ($cmd,$chn,$dat) = ($b>>7,($b>>5)&0x3,$b&0x1f);
+      if ($cmd) {
+        $latch=$chn;
+        ($vol,$bit4) = (($dat>>4)&0x01,$dat&0x0F);
+        if ($vol) {
+          $pattern[$row][$latch]{volpan} = ( $chanvol[$latch] = 15-$bit4 );
+          $pattern[$row][$latch]{freq} = $chanfreq[$latch];
+        } else {
+          $pattern[$row][$latch]{freq} = ( $chanfreq[$latch] = $bit4 );
+          $pattern[$row][$latch]{volpan} = $chanvol[$latch];
+        }
+      } else {
+        $pattern[$row][$latch]{freq} = ($chanfreq[$latch] |= (($b & 0x3F) << 4));
+        $pattern[$row][$latch]{volpan} = $chanvol[$latch];
+      }
+
+      #debugs 
+      printf("%08b",$b) if $DEBUG_IN && !$DEBUG_DETAIL && $latch==1;
+      if ($DEBUG_IN && $DEBUG_DETAIL && $latch==1) {
+        printf("%-4s %d ",("x"x($latch+1)),$cmd);
+        if ($cmd) {
+          printf("%02b %d %04b",$chn,$vol,$bit4);
+        } else {
+          printf("%07b",$dat & 0x3F);
+        }
+        print "\n";
+      }
+
+      #if ($latch!=0) { print(" (ign)\n"); next; };
+      #if ($cmd&&!$vol) { print(" (wait)\n"); next; }
+
+    } elsif ($_==0x61) {
+      # wait nn samples
+      read(INFILE,$_,2); $del=unpack("S"); $del /= 735; $del=int($del+0.5);
+      $row += $del;
+      print ".*$del\n" if $DEBUG_IN;
+    } elsif ($_==0x62) {
+      # wait 1/60
+      $row++;
+      print".\n" if $DEBUG_IN;
+    } elsif ($_==0x63) {
+      # wait 1/50
+      $row++;
+      print";\n" if $DEBUG_IN;
+    } elsif ($_==0x66) {
+      # END
+      print"-\n" if $DEBUG_IN;;
+      last;
+    } elsif ($_==0x4f) {
+      # stereo
+      read(INFILE, $_, 1);
+    } else {
+      die ("$infile : UNEXPECTED COMMAND %02x at %x\n",$_,tell(INFILE)-1);
+    }
+  }
+  close(INFILE);
 
   die "VGM file format not supported yet.\n";
 }
@@ -1209,6 +1280,12 @@ for (my $row=0; $row<=$arows; $row++) {
         delete $chan{fxnote};
         print_dp "= straight %.1f; ",$chan{note};
         $changed{note}=1;
+      
+      } elsif (defined $note->{freq}) { # play it straight
+
+        $chan{freq} = $freq->{freq} // $chan{freq};
+        print_dp "= freq %.1f; ",$chan{freq};
+        $changed{note}=1;
       }
 
       # non-note effects      
@@ -1261,6 +1338,7 @@ for (my $row=0; $row<=$arows; $row++) {
         push(@{$notedata[$outchan]}, {
           length => 1, # so far
           note => $chan{fxnote}//$chan{note},
+          freq => $chan{freq},
           vol  => $chan{vol} * ($chan{chanvol}//64)/64 * $GLOBALVOL/128,
           magicsource => $note->{magicsource}
         });
@@ -1289,6 +1367,7 @@ for (my $voice=0; $voice<$NUMCH; $voice++) {
   $prev_dur_frac=0;
   for (my $in=0; $in<scalar(@{$notedata[$voice]}); $in++) {
     $note=$notedata[$voice][$in]{note}; # if ($DEBUG_AGI) { printf("n:%6.2f  ",$note); }
+    $freqdiv=$notedata[$voice][$in]{freq}; # if ($DEBUG_AGI) { printf("n:%6.2f  ",$note); }
     $length=$notedata[$voice][$in]{length};# if ($DEBUG_AGI) { printf("l:%3d  ",$length); } # length in ticks
     $vol=$notedata[$voice][$in]{vol}; if (!defined($vol) || $vol>63) { $vol=63; }
 
@@ -1303,9 +1382,11 @@ for (my $voice=0; $voice<$NUMCH; $voice++) {
     
     # prepare frequency
     
-    $freq=$out_noisefreq=0;
     $vreg=$voice<<1;
-    if ($voice<=2) { # voice channel
+    if (defined $freqdiv) { #direct freqdiv, apparently we're reading from VGM
+      $out_fv = $freqdiv >> 4;
+      $out_fc = 128 + ($vreg<<4) + ($freqdiv%16);
+    } elsif ($voice<=2) { # voice channel
       while ($note>=0 && $note<45) { $note+=12; }
       $freq=(440.0 * exp(($note-69)*log(2.0)/12.0));  #thanks to Lance Ewing!
       #if ($voice==2 && $INSTRDATA[$notedata[$voice][$in]{instr}||99]{buzz}) { $freq=(440.0 * exp(($note-46.05)*log(2.0)/12.30)); } # +21.6
