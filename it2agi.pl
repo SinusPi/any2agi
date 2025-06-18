@@ -224,7 +224,7 @@ Options:
 
   --debug-input, --debug-proc, --debug-agi - verbose printout for debugging purposes.
   
-Output file is created in the same directory as the input file, with the .AGS extension.
+Output file is created in the same directory as the input file, with the .ags extension.
 You can also specify a different output file name.
 
 USAGE
@@ -303,13 +303,15 @@ while ($v = shift @ARGV) {
     if (!$infile) { $infile = $v; } else { $outfile = $v; }
   }
 }
-if (!$outfile) { $outfile=$infile; $outfile =~ s/\..+$/.AGS/; }
+if (!$outfile) { $outfile=$infile; $outfile =~ s/\..+$/.ags/; }
 
 $NUMCH=$#CHANNELS+1;
 
 if ($NUMCH>4) { die("IT2AGI only supports up to 4 channels.\n"); }
 
 print("Input: $infile  Output: $outfile\n");
+
+if (!-f $infile) { die("$infile : file not found\n"); }
 
 open(INFILE, "<".$infile);
 binmode(INFILE);
@@ -320,37 +322,28 @@ sub print_di { if ($DEBUG_INPUT) { printf @_; }}
 sub print_dp { if ($DEBUG_PROC) { printf @_; }}
 sub print_da { if ($DEBUG_AGI) { printf @_; }}
 
-if (its_SND()) {
-  die("$infile : The input file seems to be in AGI SOUND format already.\n");
-} elsif (its_IT()) {
-  read_IT();
-} elsif (its_MOD()) {
-  read_MOD();
-} elsif (its_S3M()) {
-  read_S3M();
-} elsif (its_XM()) {
-  read_XM();
-} elsif (its_MID()) {
-  read_MID();
-} elsif (its_VGM()) {
-  read_VGM();
-} else {
-  die("$infile : Unrecognized input file format.\n");
-}
+   read_SND()
+or read_IT()
+or read_MOD()
+or read_S3M()
+or read_XM()
+or read_MID()
+or read_VGM()
+or die("$infile : Unrecognized input file format.\n");
 
-sub its_SND() {
+sub read_SND() {
   seek(INFILE,0,0);
   read(INFILE,$_,2);
   my ($of1,$of2) = unpack("C2");
-  return ($of1==8 && $of2==0);
+  if ($of1==8 && $of2==0) { die("$infile : The input file seems to be in AGI SOUND format already.\n"); }
+  return 0;
 }
 
-sub its_IT() {
+sub read_IT() {
   seek(INFILE,0,0);
   read(INFILE,my $buf,4);
-  return ($buf eq "IMPM");
-}
-sub read_IT() {
+  return 0 unless ($buf eq "IMPM");
+
   $FORMAT="IT";
   seek(INFILE,4,0); # IMPM
   read(INFILE,$songname,26); $songname = trim($songname);
@@ -492,12 +485,11 @@ sub read_IT() {
   close(INFILE);
 }
 
-sub its_MOD() {
+sub read_MOD() {
   seek(INFILE,0x438,0);
   read(INFILE,my $buf,4);
-  return ($buf eq "M.K.");
-}
-sub read_MOD() {
+  return 0 unless $buf eq "M.K.";
+
   $FORMAT="MOD";
   seek(INFILE,0,0);
   read(INFILE,my $title,20);
@@ -572,12 +564,11 @@ sub read_MOD() {
   close(INFILE);
 }
 
-sub its_S3M() {
+sub read_S3M() {
   seek(INFILE,0x2C,0);
   read(INFILE,my $buf,4);
-  return ($buf eq "SCRM");
-}
-sub read_S3M() {
+  return 0 unless $buf eq "SCRM";
+  
   $FORMAT="S3M";
   seek(INFILE,0,0);
   read(INFILE,my $title,0x14);
@@ -587,12 +578,11 @@ sub read_S3M() {
 
 ###########################################################################
 
-sub its_XM() {
+sub read_XM() {
   seek(INFILE,0x26,0);
   read(INFILE,my $buf,11);
-  return ($buf eq "FastTracker");
-}
-sub read_XM() {
+  return 0 unless $buf eq "FastTracker";
+
   $FORMAT="XM";
   seek(INFILE,0x11,0);
   read(INFILE,my $title,0x14);
@@ -602,12 +592,11 @@ sub read_XM() {
 
 ###########################################################################
 
-sub its_MID() {
+sub read_MID() {
   seek(INFILE,0,0);
   read(INFILE,my $buf,4);
-  return ($buf eq "MThd");
-}
-sub read_MID() {
+  return 0 unless $buf eq "MThd";
+
   $FORMAT="MIDI";
   seek(INFILE,0,0);
   $chunks=0;
@@ -654,7 +643,7 @@ sub read_MID() {
       $polychans = 0; # currently playing
 
       do {{
-        $delta = read_vlq($bufread);
+        $delta = MIDI_rd_vlq($bufread);
         $totalticks+=$delta;
 
         $deltams = $delta / $miditicksbeat * $miditempo / 1000; # timestamp in ms
@@ -739,13 +728,13 @@ sub read_MID() {
         elsif ($type==0b1100) { read($bufread,$_,1); $pc=unpack("C"); print_di "$chan PCHG $pc "; }
         elsif ($type==0b1101) { read($bufread,$_,1); $v=ord($_); print_di "$chan AFTC $k=$v "; }
         elsif ($type==0b1110) { read($bufread,$_,2); $v=ord($_); print_di "$chan PWHL $k=$v "; }
-        elsif ($status==0b11110000) { print_di "SSX0 "; $len=read_vlq(); read($bufread,$buf,$len); print_di "[%s]",$buf; } # do { read($bufread,$buf,1); } until (ord($buf)==0b11110111); }
-        elsif ($status==0b11110111) { print_di "SSX1 "; $len=read_vlq(); read($bufread,$buf,$len); } # do { read($bufread,$buf,1); } until (ord($buf)==0b11110111); }
+        elsif ($status==0b11110000) { print_di "SSX0 "; $len=MIDI_rd_vlq(); read($bufread,$buf,$len); print_di "[%s]",$buf; } # do { read($bufread,$buf,1); } until (ord($buf)==0b11110111); }
+        elsif ($status==0b11110111) { print_di "SSX1 "; $len=MIDI_rd_vlq(); read($bufread,$buf,$len); } # do { read($bufread,$buf,1); } until (ord($buf)==0b11110111); }
         elsif ($status==0b11110010) { read($bufread,$buf,2); }
         elsif ($status==0b11110011) { read($bufread,$buf,1); }
         elsif ($status==0b11111111) { # meta 
           read($bufread,$_,1); $meta=unpack("C");
-          $len=read_vlq($bufread);
+          $len=MIDI_rd_vlq($bufread);
           print_di "META%02x[%d] ",$meta,$len;
           read($bufread,$metadata,$len);
           my $a=ord($metadata[0]);
@@ -836,7 +825,7 @@ sub read_MID() {
   print_di "Total rows: %d\n",$arows+1;
 }
 
-sub read_vlq {
+sub MIDI_rd_vlq {
   $FH = shift;
   $out=0;
   do {
@@ -848,12 +837,11 @@ sub read_vlq {
   return $out;
 }
 
-sub its_VGM() {
+sub read_VGM() {
   seek(INFILE,0,0);
   read(INFILE,my $buf,4);
-  return ($buf eq "Vgm ");
-}
-sub read_VGM() {
+  return 0 unless $buf eq "Vgm ";
+
   $FORMAT="VGM";
   read(INFILE,$_,4); # "Vgm "
   read(INFILE,$_,4); # eof offset
