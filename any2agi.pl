@@ -15,33 +15,65 @@
 if ($ARGV[0] eq "--readme") {
 print <<"END"
 ##############################################################
-#         Impulse Tracker -> AGI Sound Converter             #
-#    (c) 1999-2000 Nat Budin - portions by Lance Ewing       #
-#        v0.2.7 enhanced by Adam 'Sinus' Skawinski           #
+#           Many Formats -> AGI Sound Converter              #
+#             v0.7.0 by Adam 'Sinus' Skawinski               #
+#               based on 1999-2000 Nat Budin                 #
+#                 portions by Lance Ewing                    #
 ##############################################################
 
- To use this program, just type "perl it2agi xxxxxxx.it" where
- xxxxxxx.it is the name of the Impulse Tracker 2.14 file you
- want to convert.  IT2AGI will automatically spit out a file
- called xxxxxxx.ags (where xxxxxxx is the same name as your IT
- file), which is in AGI Sound format.  You can import it into
- your AGI game using AGI Studio 1.3 or higher.
+ To use this program, just type "perl any2agi inputfile" where
+ inputfile is the name of any of the following formats:
+  * Impulse Tracker (.it)
+  * Protracker (.mod)
+  * MIDI (.mid)
+  * Sega Master System, Sega Game Gear, Sega Genesis (.vgm)
 
- If you want to specify a different output file name, just
- type "perl it2agi xxxxxxx.it yyyyyyy.ags". It makes most sense
- to use output file names like "SOUND.015", as AGI Studio will
- automatically recognize file type and number when importing
- these files into the game.
+ ANY2AGI will automatically spit out a file called xxxxxxx.ags
+ in AGI Sound format.  You can import it into your AGI game
+ using AGI Studio 1.3 or higher.  You can also specify a
+ different output file name, just type:
+  perl any2agi inputfile outputfile.ags
+ It makes most sense to use output file names like "SOUND.015",
+ as AGI Studio will automatically recognize file type and number
+ when importing these files into the game.
 
  To make an Impulse Tracker file, you'll need
  OpenModPlugTracker, found at https://openmpt.org .
 
- Input formats:
- * Impulse Tracker (.it) - tempo and volume supported
+ Format features:
+ 
+ * Impulse Tracker (.it) - effects supported:
+   + Axx - speed
+   + Dxx - volume slide
+   + Exx, Fxx, Gxx - portamento
+   + Hxx - vibrato
+   + Jxx - arpeggio
+   + Mxx - channel volume
+   + Txx - tempo (except T0x and T1x)
+   + Vxx - global volume
+   Effects are rendered as a series of short notes, significantly
+   increasing file size, but allowing for impressive sounds.
+ 
  * Protracker (.mod) - basic support only, no tempo support
+ 
  * MIDI (.mid) - input needs to have monophonic tracks
-   or channels, no tempo support yet
+   or channels
 
+ * VGM for Sega systems - the .vgm file needs to be uncompressed
+   and contain data for an SN76489 chip. The notes are already
+   compatible with the Tandy/PCjr chip, so they'll be copied as-is,
+   only split across channels... that is, if the input file doesn't
+   do too much sub-1/60-sec timing trickery.
+
+Periodic Noise Caveat:
+
+ Depending on actual hardware, the sound chip may have either
+ a 16-bit or 15-bit noise shift register. In layman's terms it means
+ the "borrow channel 3 frequency" periodic noise mode will will
+ either stay in tune with the rest of the notes... or be awfully out
+ of key.
+ A feature to "retune" the noise is in the works. For now,
+ 
 Options:
 
 --channels x,x,x,y - select input channels. Default is --channels
@@ -56,25 +88,39 @@ Options:
   use equal note lengths (at the cost of a different BPM from the
   original - by default), or try to match the original's BPM
   exactly by using varied note lengths. MIDI conversion uses
-  exact tempo matching only.
+  exact tempo matching only. IT/MOD conversion defaults to "even"
+  playback, snapping to 1/60s on every tempo change. IT's smooth
+  tempo changes are not supported.
 
 --auto-drum-offs n - automatically terminate notes on the noise
   channel after n ticks. Useful when converting input files that
   use short samples and don't bother terminating them, which
   would turn into long noise notes in AGI.
 
---instr-note x y - force instrument x to play only note y. Useful
+--instr x note y - force instrument x to play only note y. Useful
   to force a drum-like instrument to play only valid AGI drum
-  notes. Typical notes are 13 (high noise), 14 (middle noise) and
-  15 (low noise). Combined with --channels to properly map an
+  notes. Typical notes are 12 (high noise), 13 (middle noise) and
+  14 (low noise). Combined with --channels to properly map an
   input channel to the noise output, and --auto-drum-offs to make
   output drums shorter, this option can turn a typical "rhythm
   channel" in the input into proper noise channel output for AGI.
 
---instr-shift x y - shift (transpose) instrument x by y
+--instr x shift y - shift (transpose) instrument x by y
   semitones. Use when input samples were recorded in a weird
   pitch, and notes in the input were written to match that. Or,
   use +12 or -12 to transpose by an octave.
+
+--instr x arp 047 - make instrument x magically generate
+  arpeggio 0-4-7 (on ticks defined by --arpspeed)
+
+--instr x noise 1 - make instrument x on channel 3 magically
+  insert "pitch borrowing" noise notes into the 4th (noise) channel
+
+--instr x buzz 1 - make instrument x on channel 3 magically
+  insert "pitch borrowing" buzz notes into the 4th (noise) channel,
+  effectively turning channel 3+4 into bass line
+
+--arpspeed - set magic arpeggio speed (default: 1)
 
 ##############################################################
     Notes on making IT2AGI-compliant Impulse Tracker files   #
@@ -89,25 +135,21 @@ Options:
  2) Noise notes are:
     C-0 (high buzz), C#0 (mid buzz), D-0 (low buzz), D#0 (borrow buzz)
     C-1 (high noise), C#1 (mid noise), D-1 (low noise), D#1 (borrow noise)
-    "Borrowed" notes play frequencies borrowed from the third channel, though
-    not very precisely. They're good for special effects like explosions
-    or zaps, though, if you play a series of appropriate notes on
-    channel 3 (probably with a volume of 0).    
-
- 2) IT2AGI doesn't (yet) support changing tempo or speed in
-    the middle of the song.  Don't try this, as it will be
-    cruelly ignored.
+    "Borrowed" notes play frequencies borrowed from the third channel
+    (though not very precisely, depending on actual hardware). They're
+    good for special effects like explosions or zaps, though, if you
+    play a series of appropriate notes on channel 3 (probably with a
+    volume of 0).    
 
  3) Finally, AGI is very limited in what it can do.  If AGI
-    doesn't support something, IT2AGI most likely doesn't
+    doesn't support something, ANY2AGI most likely doesn't
     either.
 
  4) On PC Speaker, only the first channel will be used, other channels
     will be ignored. Keep that in mind when making your input files.
-    Of course you can also make two separate files, one monophonic for
-    PC Speaker, and one multichannel for PCjr, and play them appropriately
-    from within your game, by checking AGI var 22 - but watch out for memory
-    limits.
+    Alternately, you can make two separate files, one monophonic for
+    PC Speaker, and one multichannel for PCjr, and choose to play thhe
+    right one from within your game, by checking AGI var 22.
 
  5) If you're writing an IT file from scratch, set tempo to 150
     and speed to 1. This will give you a perfect match for the
@@ -136,6 +178,8 @@ Options:
 
 <sinus@sinpi.net takes over>
 
+ Nat's email above seems to be no longer functional...
+
  Bugs were fixed, new features and input formats were added!
  You can now find this program on GitHub at:
  https://github.com/SinusPi/any2agi
@@ -159,6 +203,7 @@ Version history:
  0.6.0: tempo changes in IT implemented properly;
         global/channel volume setting/effect;
         test suite enhanced to check debug printouts (easier to read)
+ 0.7.0: VGM support added
 
 END
 ;
@@ -167,67 +212,35 @@ END
 
 
 if ($ARGV[0] eq "" || $ARGV[0] eq "-h" || $ARGV[0] eq "--help") {
-  print <<"USAGE";
-IT2AGI version 0.6.0
+  print <<"END_OF_USAGE";
+ANY2AGI version 0.7.0
 (c) 1999-2000 Nat Budin - portions by Lance Ewing
-Fixes 2025 by Adam 'Sinus' Skawinski
+Enhancements 2025 by Adam 'Sinus' Skawinski, sinus[at]sinpi.net
 
-Usage: it2agi [options] inputfile [outputfile]
+Usage: any2agi [options] inputfile [outputfile]
 
-Input formats supported: IT, MOD, S3M, XM, MIDI.
+Input formats supported: IT, MOD, MIDI, VGM.
 
 Options:
+  
   --readme - show detailed instructions.
-  --channels x,x,x,y - select input channels. Default is
-    --channels 1,2,3,4 to output first four channels, with
-    the last being used as noise. --channels 1,2,3 would
-    simply omit the noise channel. Midi channels are
-    numbered from 0.
-  --tempo-exact - allow exact tempo, at the cost of even
-    playback. AGI engine plays using 1/60s ticks, so any
-    playback must either use note lengths being multiples
-    of 1/60s (at the cost of a different BPM from the
-    original - by default), or try to match the original's
-    BPM exactly by using varied note lengths.
-    MIDI conversion uses exact tempo matching only.
-    IT/MOD conversion defaults to "even" playback, snapping
-    to 1/60s on every tempo change.
-    IT smooth tempo changes are not supported.
-  --auto-drum-offs n - automatically terminate notes on
-    the noise channel after n ticks. Useful when
-    converting input files that use short samples and
-    don't bother terminating them, which would turn into
-    long noise notes in AGI.
-  --instr x note y - force instrument x to play only note
-    y. Useful to force a drum-like instrument to play
-    only valid AGI drum notes. Typical notes are 13 (high
-    noise), 14 (middle noise) and 15 (low noise).
-    Combined with --channels to properly map an input
-    channel to the noise output, and --auto-drum-offs to
-    make output drums shorter, this option can turn a
-    typical "rhythm channel" in the input into proper
-    noise channel output for AGI.
-  --instr x shift y - shift (transpose) instrument x by y
-    semitones. Use when input samples were recorded in a
-    weird pitch, and notes in the input were written to
-    match that. Or, use +12 or -12 to transpose by an
-    octave.
-  --instr x arp 047 - make instrument x magically generate
-    arpeggio 0-4-7 (on ticks defined by --arpspeed)
-  --instr x noise 1 - make instrument x on channel 3
-    magically insert "pitch borrowing" noise notes
-    into the 4th (noise) channel
-  --instr x buzz 1 - make instrument x on channel 3
-    magically insert "pitch borrowing" buzz notes
-    into the 4th (noise) channel
-  --arpspeed - set magic arpeggio speed (default: 1)
+
+  --channels x,x,x,y - select input channels.
+  --tempo-exact - allow exact but jittery tempo
+  --auto-drum-offs n - automatically terminate notes
+  --instr x note y - force instrument x to play note y
+  --instr x shift y - shift instrument x by y semitones
+  --instr x arp 047 - make instrument x generate arpeggio
+  --instr x noise 1 - make instrument x generate noise notes
+  --instr x buzz 1 - make instrument x generate buzz notes
+  --arpspeed - set arpeggio speed (default: 1)
 
   --debug-input, --debug-proc, --debug-agi - verbose printout for debugging purposes.
-  
+
 Output file is created in the same directory as the input file, with the .ags extension.
 You can also specify a different output file name.
 
-USAGE
+END_OF_USAGE
 ;
   exit(1);
 }
@@ -1388,7 +1401,9 @@ for (my $voice=0; $voice<$NUMCH; $voice++) {
     if (defined $freqdiv) { #direct freqdiv, apparently we're reading from VGM
       $out_fv = $freqdiv >> 4;
       $out_fc = 128 + ($vreg<<4) + ($freqdiv%16);
+    
     } elsif ($voice<=2) { # voice channel
+    
       while ($note>=0 && $note<45) { $note+=12; }
       $freq=(440.0 * exp(($note-69)*log(2.0)/12.0));  #thanks to Lance Ewing!
       #if ($voice==2 && $INSTRDATA[$notedata[$voice][$in]{instr}||99]{buzz}) { $freq=(440.0 * exp(($note-46.05)*log(2.0)/12.30)); } # +21.6
