@@ -346,10 +346,29 @@ or die("$infile : Unrecognized input file format.\n");
 
 sub read_SND() {
   seek(INFILE,0,0);
-  read(INFILE,$_,2);
-  my ($of1,$of2) = unpack("C2");
-  if ($of1==8 && $of2==0) { die("$infile : The input file seems to be in AGI SOUND format already.\n"); }
-  return 0;
+  read(INFILE,$_,8); my @offs = unpack("S4");
+  #if ($offs[0]==8) { die("$infile : The input file seems to be in AGI SOUND format already.\n"); }
+  return false unless $offs[0]==8;
+  
+  $FORMAT="AGI";
+  for (my $ch=0;$ch<=3;$ch++) { $row[$ch]=0; }
+  for (my $chan=0;$chan<=3;$chan++) {
+    seek(INFILE,$offs[$chan],0);
+    print_di "Reading channel $chan at offset $offs[$chan]\n";
+    { do {
+      read(INFILE,$_,2); my $dur = unpack("S");
+      last if $dur==0xFFFF or eof(INFILE);
+      read(INFILE,$_,3); my ($fa,$fb,$at) = unpack("CCC");
+      my $ch=($fb>>5)&0x3;
+      $pattern[$row[$ch]][$ch]{freq} = (($fa&0x3f)<<4) | ($fb&0x0f);
+      $pattern[$row[$ch]][$ch]{volpan} = (15-($at&0x0f))<<2;
+      $row[$ch]+=$dur;
+      last if $row[$ch]>=100000;
+    } while (1); } # I hate perl's do-while syntax
+    $pattern[$row[$chan]][$chan]{note} = -1; # no note
+  }
+  $NUMCH=4;
+  close(INFILE);
 }
 
 sub read_IT() {
@@ -577,6 +596,7 @@ sub read_MOD() {
   close(INFILE);
 }
 
+# stub
 sub read_S3M() {
   seek(INFILE,0x2C,0);
   read(INFILE,my $buf,4);
@@ -589,8 +609,7 @@ sub read_S3M() {
   die("$infile : Sorry, S3Ms are not yet supported.\n");
 }
 
-###########################################################################
-
+# stub
 sub read_XM() {
   seek(INFILE,0x26,0);
   read(INFILE,my $buf,11);
@@ -1048,6 +1067,13 @@ for (my $ins=1;$ins<scalar(@INSTRDATA);$ins++) {
 my $NOTE_BORROW_BUZZ = 3;
 my $NOTE_BORROW_NOISE = 15;
 
+$arows = $#pattern+1;
+if ($MAXLENGTH) {
+  my $oldarows = $arows;
+  $arows = min($arows,$MAXLENGTH); # limit the number of rows
+  print "Total rows $oldarows, limited to $arows.\n";
+}
+
 # process magic drums
 for (my $row=0; $row<=$arows; $row++) {
   my $note = $pattern[$row][2];
@@ -1122,14 +1148,6 @@ sub calc_ticks_per_row {
     $ticks_per_row = int($ticks_per_row + 0.5);
   }
   return $ticks_per_row;
-}
-
-$arows = $#pattern+1;
-
-if ($MAXLENGTH) {
-  my $oldarows = $arows;
-  $arows = min($arows,$MAXLENGTH); # limit the number of rows
-  print "Total rows $oldarows, limited to $arows.\n";
 }
 
 my $row_ticks = 0;
