@@ -291,6 +291,7 @@ $IT_NOTE_CUT = 254;
 
 $ARPSPEED = 0.5; # default arpeggio speed
 $GLOBALVOL = 128;
+$BUZZ_RETUNE = 0;
 
 while ($v = shift @ARGV) {
      if ($v eq "--debug-input") { $DEBUG_INPUT=1; }
@@ -299,7 +300,7 @@ while ($v = shift @ARGV) {
   elsif ($v eq "--channels") { @CHANNELS = split(",",shift @ARGV); $CHANNELS_DEFAULT=0; }
   elsif ($v eq "--tempo-exact") { $tempomode_override="exact"; }
   elsif ($v eq "--auto-drum-offs") { $auto_drum_offs = shift @ARGV; }
-  elsif ($v eq "--buzz-retune") { $buzz_retune = 1; }
+  elsif ($v eq "--buzz-retune") { my $retune = shift @ARGV; if ($retune eq "u") { $BUZZ_RETUNE=-1; } if ($retune eq "d") { $BUZZ_RETUNE=1; } }
   elsif ($v eq "--instr")  {
     my $instr = shift @ARGV;
     my $meta = shift @ARGV;
@@ -320,7 +321,7 @@ if (!$outfile) { $outfile=$infile; $outfile =~ s/\..+$/.ags/; }
 
 $NUMCH=$#CHANNELS+1;
 
-if ($NUMCH>4) { die("IT2AGI only supports up to 4 channels.\n"); }
+if ($NUMCH>4) { die("Sierra AGI SOUND resoures only support up to 4 channels.\n"); }
 
 print("Input: $infile  Output: $outfile\n");
 
@@ -348,9 +349,10 @@ sub read_SND() {
   seek(INFILE,0,0);
   read(INFILE,$_,8); my @offs = unpack("S4");
   #if ($offs[0]==8) { die("$infile : The input file seems to be in AGI SOUND format already.\n"); }
-  return false unless $offs[0]==8;
+  return 0 unless $offs[0]==8;
   
   $FORMAT="AGI";
+  print "Reading Sierra AGI SOUND resource from $infile\n";
   for (my $ch=0;$ch<=3;$ch++) { $row[$ch]=0; }
   for (my $chan=0;$chan<=3;$chan++) {
     seek(INFILE,$offs[$chan],0);
@@ -369,6 +371,7 @@ sub read_SND() {
   }
   $NUMCH=4;
   close(INFILE);
+  return 1;
 }
 
 sub read_IT() {
@@ -379,7 +382,7 @@ sub read_IT() {
   $FORMAT="IT";
   seek(INFILE,4,0); # IMPM
   read(INFILE,$songname,26); $songname = trim($songname);
-  print "Reading module '$songname' from $infile\n";
+  print "Reading IT module '$songname' from $infile\n";
 
   read(INFILE,$_,2); # rows/beat, rows/meas
   read(INFILE,$_,16);
@@ -515,6 +518,7 @@ sub read_IT() {
     }
   }
   close(INFILE);
+  return 1;
 }
 
 sub read_MOD() {
@@ -525,7 +529,7 @@ sub read_MOD() {
   $FORMAT="MOD";
   seek(INFILE,0,0);
   read(INFILE,my $title,20);
-  print("Pass 1. Reading Protracker module '$title'...\n");
+  print("Reading Protracker module '$title' from $infile\n");
   # samples, ignore
   for (my $sn=0;$sn<31;$sn++) {
     read(INFILE,my $sname,22); $sname = trim($sname);
@@ -594,6 +598,7 @@ sub read_MOD() {
     $arow+=$modpatlen;
   }
   close(INFILE);
+  return 1;
 }
 
 # stub
@@ -642,7 +647,7 @@ sub read_MID() {
 
   my $mididata = [];
 
-  print "Pass 1: Reading MIDI Data\n";
+  print "Reading MIDI Data\n";
 
   do {
     read(INFILE,my $chunktype,4);
@@ -855,6 +860,7 @@ sub read_MID() {
   };
   $IT_TEMPO = 150; $IT_SPEED = 1; # default tempo and speed
   print_di "Total rows: %d\n",$arows+1;
+  return 1;
 }
 
 sub MIDI_rd_vlq {
@@ -875,7 +881,9 @@ sub read_VGM() {
   my (@buf) = unpack("CCCC",$buf); if (sprintf("%02x%02x%02x%02x",@buf) eq "1f8b0800") { die("$infile : This is a GZIP-compressed VGM file. You'll have to unGZIP it first, sorry...\n"); }
   return 0 unless $buf eq "Vgm ";
 
+
   $FORMAT="VGM";
+  print("Reading VGM data from $infile\n");
   seek(INFILE,0,0);
   read(INFILE,$_,4); # "Vgm "
   read(INFILE,$_,4); # eof offset
@@ -929,7 +937,7 @@ sub read_VGM() {
 
       #debugs 
       #print_di "%08b",$b;
-      if ($DEBUG_IN && $DEBUG_DETAIL && $latch==1) {
+      if ($DEBUG_INPUT && $latch==1) {
         print_di "%-4s %d ",("x"x($latch+1)),$cmd;
         if ($cmd) {
           print_di "%02b %d %04b",$chn,$vol,$bit4;
@@ -977,78 +985,12 @@ sub read_VGM() {
     }
   }
   close(INFILE);
-
+  return 1;
 }
 
 ###########################################################################
 # After reading a tracker module, we're expecting to have a big $pattern[$row][$channel]{note,instrument,volpan,command,param} with all patterns glued.
 # NOT NEEDED when working with a MIDI file.
-
-
-if (0 && @pattern) {
-  $tunedata=[];
-
-  print "Using channels ".join(",",@CHANNELS)."\n";
-
-  print "Pass 2: Finding Note Lengths\n";
-
-  $tempomode = $tempomode_override || "even";
-  
-  my $rowdur_ms = (2500 / $IT_TEMPO) * $IT_SPEED; # 2500 is the default IT row duration in ms
-  printf "Using tempo %d speed %d, 'classic' tempo: 1 row = %.2f ms\n",$IT_TEMPO,$IT_SPEED,$rowdur_ms;
-  if ($tempomode eq "even") {
-    # pull the row duration to be a multiple of AGI ticks
-    $mul = int($rowdur_ms/$AGI_TICK + 0.5); if ($mul<1) { $mul=1; }
-    $rowdur_ms = $mul*$AGI_TICK;
-    printf "Tempo mode is 'even', row = %d AGI ticks (%.2f ms)\n",$mul,$rowdur_ms;
-  } else {
-    print "Tempo mode is 'exact', row playback may be uneven.\n";
-  }
-
-  $arows = $#pattern+1;
-
-
-  # row timing recalculation - DISABLED for now!
-  if (0) {
-    $rowstarts_ms = [0];
-    $rowstartms = 0;
-    for (my $row=0; $row<=$arows; $row++) {
-      $rowstarts_ms->[$row] = $rowstartms;
-      for (my $inchan=0; $inchan<16;$inchan++) {
-        my $note=$pattern[$row][$inchan];
-        if ($FORMAT eq "IT" && $note->{command}==$IT_CMD_A_SPEED) {
-          $IT_SPEED = $note->{param};
-          $rowdur_ms = (2500 / $IT_TEMPO) * $IT_SPEED; # recalculate row duration
-          if ($tempomode eq "even") {
-            # pull the row duration to be a multiple of AGI ticks... again
-            $mul = int($rowdur_ms/$AGI_TICK + 0.5); if ($mul<1) { $mul=1; }
-            $rowdur_ms = $mul*$AGI_TICK;
-          }
-          printf "Row %d: speed command, new row duration %.2f ms\n",$row,$rowdur_ms;
-        } elsif ($FORMAT eq "IT" && $note->{command}==$IT_CMD_T_TEMPO) {
-          if ($note->{param}&0x80>>4 == 0) {
-            printf("T0x command unsupported, skipping.\n");
-          } elsif ($note->{param}&0x80>>4 == 1) {
-            printf("T1x command unsupported, skipping.\n");
-          } elsif ($note->{param}&0x80>>4 >= 2) {
-            $IT_TEMPO = $note->{param};
-          }
-          $rowdur_ms = (2500 / $IT_TEMPO) * $IT_SPEED; # recalculate row duration
-          if ($tempomode eq "even") {
-            # pull the row duration to be a multiple of AGI ticks... again
-            $mul = int($rowdur_ms/$AGI_TICK + 0.5); if ($mul<1) { $mul=1; }
-            $rowdur_ms = $mul*$AGI_TICK;
-          }
-          printf "Row %d: tempo command, new row duration %.2f ms\n",$row,$rowdur_ms;
-        }
-
-      }
-      $rowstartms += $rowdur_ms;
-    }
-  }
-
-}
-
 
 for (my $ins=1;$ins<scalar(@INSTRDATA);$ins++) {
   # Print details of the current instrument
@@ -1062,7 +1004,6 @@ for (my $ins=1;$ins<scalar(@INSTRDATA);$ins++) {
   if (defined $INSTRDATA[$ins]{vib}) { printf "; Vibrato %03x",$INSTRDATA[$ins]{vib}; }
   print "\n";
 }
-
 
 my $NOTE_BORROW_BUZZ = 3;
 my $NOTE_BORROW_NOISE = 15;
@@ -1093,7 +1034,6 @@ for (my $row=$arows-1; $row>=1; $row--) {
     undef $pattern[$row][3];
   }
 }
-
 
 
 if ($DEBUG_PROC) {
@@ -1136,6 +1076,17 @@ if ($IT_TEMPO) {
     printf "Tempo mode is 'even', row = %d AGI ticks\n",$TICKS_PER_ROW,$rowdur_ms;
   } else {
     print "Tempo mode is 'exact', row = %.1f AGI ticks (%d ms/row), playback may be uneven.\n",$TICKS_PER_ROW,$rowdur_ms;
+  }
+}
+
+if ($BUZZ_RETUNE) {
+  my $lastnoise;
+  for (my $row=0; $row<=$arows; $row++) {
+    if ($pattern[$row][3]) { $lastnoise=$pattern[$row][3]; }
+    if ($pattern[$row][2] && $lastnoise && (($lastnoise->{note} || $lastnoise->{freq})==$NOTE_BORROW_BUZZ)) {
+      # retune the note on channel 3
+      $pattern[$row][2]{buzz_retune} = $BUZZ_RETUNE; # delay retuning until output, as we may have a note or freq set
+    }
   }
 }
 
@@ -1331,7 +1282,7 @@ for (my $row=0; $row<=$arows; $row++) {
         print_dp "= straight %.1f; ",$chan{note};
         $changed{note}=1;
       
-      } elsif (defined $note->{freq}) { # play it straight
+      } elsif (defined $note->{freq}) { # play by raw freq
 
         $chan{freq} = $note->{freq} // $chan{freq};
         print_dp "= freq %.1f; ",$chan{freq};
@@ -1416,76 +1367,90 @@ for (my $voice=0; $voice<$NUMCH; $voice++) {
   printf " - Channel %d (%s), %d notes\n",$voice+1,$voice<=2&&"voice"||"noise",scalar(@{$notedata[$voice]});
   $prev_dur_frac=0;
   for (my $in=0; $in<scalar(@{$notedata[$voice]}); $in++) {
-    $note=$notedata[$voice][$in]{note}; # if ($DEBUG_AGI) { printf("n:%6.2f  ",$note); }
-    $freqdiv=$notedata[$voice][$in]{freq}; # if ($DEBUG_AGI) { printf("n:%6.2f  ",$note); }
-    $length=$notedata[$voice][$in]{length};# if ($DEBUG_AGI) { printf("l:%3d  ",$length); } # length in ticks
-    $vol=$notedata[$voice][$in]{vol}; if (!defined($vol) || $vol>63) { $vol=63; }
+    my $ndat = $notedata[$voice][$in];
+    $length=$ndat->{length};# if ($DEBUG_AGI) { printf("l:%3d  ",$length); } # length in ticks
+    $note=$ndat->{note}; # if ($DEBUG_AGI) { printf("n:%6.2f  ",$note); }
+    $freqdiv=$ndat->{freq}; # if ($DEBUG_AGI) { printf("n:%6.2f  ",$note); }
+    $vol=$ndat->{vol}; if (!defined($vol) || $vol>63) { $vol=63; }
 
     #if ($length==0) { next; } # skip zero-length notes
 
     # prepare duration
 
-    #$duration_f = $length / $AGI_TICK;
-    #$out_duration = int($duration_f + $prev_dur_frac + 0.5); if ($out_duration<1) { $out_duration=1; }
-    #$prev_dur_frac = $duration_f - $out_duration; # used in 'exact' tempo mode
     $out_duration = $length;
     
-    # prepare frequency
+    # prepare frequency div
     
-    $vreg=$voice<<1;
-    if (defined $freqdiv) { #direct freqdiv, apparently we're reading from VGM
-      $out_fv = $freqdiv >> 4;
-      $out_fc = 128 + ($vreg<<4) + ($freqdiv%16);
+    if (0 && defined $freqdiv) { #direct freqdiv, apparently we're reading from VGM
+      $out_f1 = $freqdiv >> 4;
+      $out_f2 = 128 + ($vreg<<4) + ($freqdiv%16);
+    }
     
-    } elsif ($voice<=2) { # voice channel
-    
-      while ($note>=0 && $note<45) { $note+=12; }
-      $freq=(440.0 * exp(($note-69)*log(2.0)/12.0));  #thanks to Lance Ewing!
-      #if ($voice==2 && $INSTRDATA[$notedata[$voice][$in]{instr}||99]{buzz}) { $freq=(440.0 * exp(($note-46.05)*log(2.0)/12.30)); } # +21.6
-      if ($buzz_retune && $voice==2 && $notedata[$voice][$in]{magicsource}) { $freq=$freq/(16/15); }
-      if ($voice==2 && $notedata[$voice][$in]{magicsource}) { $freq<<=1; }
-      if (int($freq)!=$freq) {
-        if ($freq<int($freq)+0.5) {} else {$freq=int($freq)+1}
+    if ($voice<=2) { # tone channel
+      if (!defined $freqdiv) { # we need a freqdiv
+        while ($note>=0 && $note<45) { $note+=12; } # adjust low octaves
+        $freq=(440.0 * exp(($note-69)*log(2.0)/12.0));  #thanks to Lance Ewing!
+
+        #if ($voice==2 && $INSTRDATA[$notedata[$voice][$in]{instr}||99]{buzz}) { $freq=(440.0 * exp(($note-46.05)*log(2.0)/12.30)); } # +21.6
+        
+        if (int($freq)!=$freq) {
+          if ($freq<int($freq)+0.5) {} else {$freq=int($freq)+1}
+        }
+        $freqdiv = $freq ? int(111860/$freq) : 0;
+        if ($note==-1) { $freq=0; $freqdiv=0; }
       }
-      $out_freqdiv = $freq ? int(111860/$freq) : 0;
-      if ($note==-1) { $freq=0; $out_freqdiv=0; }
+
+      # retune the bass if need be
+      $NOISE_DETUNE = 16/15;
+      if ($voice==2) {
+           if ($ndat->{buzz_retune}>0) { $freqdiv /= $NOISE_DETUNE; }
+        elsif ($ndat->{buzz_retune}<0) { $freqdiv *= $NOISE_DETUNE; }
+        elsif ($buzz_retune && $notedata[$voice][$in]{magicsource}) { $freqdiv *= $NOISE_DETUNE; }
+        if ($ndat->{magicsource}) { $freqdiv>>=1; } # add an octave to bass
+      }
       
-      $out_fv = $out_freqdiv >> 4;
-      $out_fc = 128 + ($vreg<<4) + ($out_freqdiv%16);
+      $out_f1 = $freqdiv >> 4;
+      $out_f2 = 128 + ($voice<<5) + ($freqdiv&0x0f);
     
     } else { # noise channel
     
-      # override drums
-      if ($voice==3 && $FORMAT eq "MIDI" && !$NOMIDIREMAP) {
-        if ($DRUMNOTES{$note}) { $note = $DRUMNOTES{$note}->{note}; }
-        else { $note = $DRUMNOTES{999}->{note}; }
-      }
+      if (!defined $freqdiv) { # we need a freqdiv
+        # override drums
+        if ($voice==3 && $FORMAT eq "MIDI" && !$NOMIDIREMAP) {
+          if ($DRUMNOTES{$note}) { $note = $DRUMNOTES{$note}->{note}; }
+          else { $note = $DRUMNOTES{999}->{note}; }
+        }
 
-      $out_noisetype = int($note/12)%2;
-      $out_noisefreq = $note%4;
-      if ($note==-1) { $out_noisetype=$out_noisefreq=0; }
+        $out_noisetype = int($note/12) % 2;
+        $out_noisefreq = $note % 4;
+        if ($note==-1) { $out_noisetype=$out_noisefreq=0; }
+      } else {
+        $out_noisetype = ($freqdiv & 0x4) >> 2;
+        $out_noisefreq = $freqdiv & 0x3;
+      }
       
-      $out_fv = 0;
-      $out_fc = 128 + 96 + ($out_noisetype<<2) + ($out_noisefreq);  # even octave: periodic, odd octave: noise. Notes = 3 noise types + 4th borrowed from channel 3
+      $out_f1 = 0;
+      $out_f2 = 0x80 + 0x60 + ($out_noisetype<<2) + ($out_noisefreq);  # even octave: periodic, odd octave: noise. Notes = 3 noise types + 4th borrowed from channel 3
     }
 
     if ($note==-1) { $vol=0; } #rest
     $vol=$vol>>2; # TODO: make it work in log scale, as SN76489 does
-    $out_att=128 + (($vreg|1)<<4) + (15-$vol);
-    if ($vol<0) { # skip volume!?
-      $out_att=0;
-    }
+    $out_att=0x80 + ($voice<<5) + 0x10 + (15-$vol);
+    # if ($vol<0) { # skip volume!?
+    #   $out_att=$out_fc;
+    # }
 
-    die "overflow f $out_fv" if ($out_fv<0 || $out_fv>255);  die "overflow v $out_fc" if ($out_fc<0 || $out_fc>255);
-    die "overflow a $out_att areg $vreg ".(($vreg|1)<<4)." atten $out_atten" if ($out_att<0 || $out_att>255);
+    die "overflow f1 $out_f1" if ($out_f1<0 || $out_f1>255);
+    die "overflow f2 $out_f2" if ($out_f2<0 || $out_f2>255);
+    die "overflow a $out_att atten $out_atten" if ($out_att<0 || $out_att>255);
 
-    $packet = pack("SCCC",$out_duration,$out_fv,$out_fc,$out_att);
+    $packet = pack("SCCC",$out_duration,$out_f1,$out_f2,$out_att);
     $snddata[$voice] = $snddata[$voice].$packet;
     
     if ($DEBUG_AGI) { printf("%4d: n=%5.1f/%s v=%2d  d=%3d  =  %02x %02x %02x %02x %02x\n",
      $in+1,
      $note, $voice<=2 && sprintf("%6.1fHz",$freq) || ($note==-1?"------- ":sprintf("%4s,%2s ",qw(buzz hiss)[$out_noisetype],qw(hi md lo c2)[$out_noisefreq])), $vol, $out_duration,
-     ord(substr($packet,0,1)),ord(substr($packet,1,1)),$out_fv,$out_fc,$out_att); }
+     ord(substr($packet,0,1)),ord(substr($packet,1,1)),$out_f1,$out_f2,$out_att); }
   }
 }
 

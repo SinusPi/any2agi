@@ -1,5 +1,5 @@
 Input: wlaskot.mid  Output: out_wlaskot.ags
-Pass 1: Reading MIDI Data
+Reading MIDI Data
 Header: format 1, 1 tracks, ticks/beat=192, negsmpte=, ticksperf=
 Reading track 1, 404 bytes
 [+    0=    0=  0.000s]: Status 11111111  META58[4] TSIG 3/4 24clk 8*32/beat
@@ -422,6 +422,7 @@ PROCESSING PATTERN:
  222. n^^^ v-- -- --  |  n--- v-- -- --  |  n--- v-- -- --  |  n--- v-- -- --  |  
  223. n--- v-- -- --  |  n--- v-- -- --  |  n--- v-- -- --  |  n--- v-- -- --  |  
  224. n--- v-- -- --  |  n^^^ v-- -- --  |  n^^^ v-- -- --  |  n--- v-- -- --  |  
+ 225. n--- v-- -- --  |  n--- v-- -- --  |  n--- v-- -- --  |  n--- v-- -- --  |  
 Pass 3: Rendering rests and effects
 Tempo 150 speed 1, 'classic' tempo: 1 row = 16.67 ms
 Tempo mode is 'even', row = 1 AGI ticks
